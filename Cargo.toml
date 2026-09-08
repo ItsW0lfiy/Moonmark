@@ -1,6 +1,6 @@
 [package]
 name = "moonmark"
-version = "0.1.0-dev.3"
+version = "0.1.0-dev.4"
 edition = "2024"
 rust-version = "1.94"
 build = "build.rs"
