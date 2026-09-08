@@ -1731,7 +1731,9 @@ private:
         open_row->addWidget(shortcut);
         open_row->addStretch();
         prompt_layout->addLayout(open_row);
-        empty_open->setFocus(Qt::OtherFocusReason);
+        QTimer::singleShot(0, empty_open, [empty_open] {
+            if (empty_open->isVisible()) empty_open->setFocus(Qt::OtherFocusReason);
+        });
         empty_layout->addWidget(prompt, 0, Qt::AlignHCenter);
         empty_layout->addStretch(3);
         stack_->addWidget(empty);
