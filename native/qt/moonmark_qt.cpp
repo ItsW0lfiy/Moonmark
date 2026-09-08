@@ -4,6 +4,7 @@
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
+#include <QAccessible>
 #include <QBoxLayout>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -227,6 +228,14 @@ QImage placeholderImage(const QString& message, int width = 900, int height = 72
     return image;
 }
 
+QMimeData* snapshotClipboard() {
+    auto* saved = new QMimeData;
+    if (const auto* current = QGuiApplication::clipboard()->mimeData()) {
+        for (const auto& format : current->formats()) saved->setData(format, current->data(format));
+    }
+    return saved;
+}
+
 class MoonButton final : public QPushButton {
 public:
     explicit MoonButton(const QString& text, QWidget* parent = nullptr) : QPushButton(text, parent) {
@@ -361,14 +370,86 @@ public:
     }
     [[nodiscard]] QString plainText() const { return document()->toPlainText(); }
     [[nodiscard]] bool testSelectionCopy() {
-        QTextCursor cursor(document());
-        cursor.select(QTextCursor::Document);
-        setTextCursor(cursor);
+        auto* previous = snapshotClipboard();
+        QKeyEvent select_event(QEvent::KeyPress, Qt::Key_A, Qt::ControlModifier);
+        QApplication::sendEvent(this, &select_event);
         QKeyEvent copy_event(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
         QApplication::sendEvent(this, &copy_event);
         const auto copied = QGuiApplication::clipboard()->text();
+        QGuiApplication::clipboard()->setMimeData(previous);
         return copied.size() > 40 && !copied.contains(QChar::ObjectReplacementCharacter) &&
                !copied.contains(QChar(0xFDD0)) && !copied.contains(QChar(0xFDD1));
+    }
+
+    [[nodiscard]] bool testCodeCopy() {
+        if (code_sources_.empty()) return true;
+        for (auto block = document()->begin(); block.isValid(); block = block.next()) {
+            for (auto fragment = block.begin(); !fragment.atEnd(); ++fragment) {
+                const auto part = fragment.fragment();
+                if (part.charFormat().anchorHref() != QStringLiteral("moonmark-copy:0")) continue;
+                QTextCursor cursor(document());
+                cursor.setPosition(part.position() + 1);
+                setTextCursor(cursor);
+                ensureCursorVisible();
+                const auto point = cursorRect(cursor).center();
+                auto* previous = snapshotClipboard();
+                QMouseEvent press(QEvent::MouseButtonPress, point, viewport()->mapToGlobal(point),
+                                  Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent release(QEvent::MouseButtonRelease, point, viewport()->mapToGlobal(point),
+                                    Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(viewport(), &press);
+                QApplication::sendEvent(viewport(), &release);
+                const bool copied = QGuiApplication::clipboard()->text() == code_sources_.front();
+                if (!copied) {
+                    std::fprintf(stdout, "COPY_DIAGNOSTIC press=%d cursor=%d selected=%d anchor=%s clipboard_length=%lld expected_length=%lld\n",
+                                 press_position_, textCursor().position(), textCursor().hasSelection(),
+                                 cursorForPosition(point).charFormat().anchorHref().toUtf8().constData(),
+                                 static_cast<long long>(QGuiApplication::clipboard()->text().size()),
+                                 static_cast<long long>(code_sources_.front().size()));
+                }
+                QGuiApplication::clipboard()->setMimeData(previous);
+                return copied;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool testDocumentStyle() const {
+        int tables = 0;
+        bool right_aligned = false;
+        for (auto* frame : document()->rootFrame()->childFrames()) {
+            auto* table = qobject_cast<QTextTable*>(frame);
+            if (table == nullptr) continue;
+            ++tables;
+            if (table->format().border() != 0) return false;
+            for (int row = 0; row < table->rows(); ++row) {
+                for (int column = 0; column < table->columns(); ++column) {
+                    const auto cell = table->cellAt(row, column);
+                    const auto format = cell.format().toTableCellFormat();
+                    if (format.leftBorder() != 0 || format.rightBorder() != 0 ||
+                        format.topBorder() != 0) return false;
+                    right_aligned |= cell.firstCursorPosition().blockFormat().alignment() ==
+                                     Qt::AlignRight;
+                    const auto block = cell.firstCursorPosition().block();
+                    for (auto it = block.begin(); !it.atEnd(); ++it) {
+                        if (it.fragment().charFormat().background().style() != Qt::NoBrush)
+                            return false;
+                    }
+                }
+            }
+        }
+        const auto palette = QApplication::palette();
+        for (const auto group : {QPalette::Active, QPalette::Inactive, QPalette::Disabled}) {
+            for (const auto role : {QPalette::Accent, QPalette::Highlight, QPalette::Link,
+                                    QPalette::Text, QPalette::Button, QPalette::ButtonText}) {
+                const auto color = palette.color(group, role);
+                if (color.red() != color.green() || color.green() != color.blue()) return false;
+            }
+        }
+        auto* accessible = QAccessible::queryAccessibleInterface(
+            const_cast<DocumentView*>(this));
+        return tables > 0 && right_aligned && accessible != nullptr &&
+               accessible->textInterface() != nullptr && isReadOnly();
     }
 
     void queueAllImagesForSmoke() {
@@ -462,6 +543,8 @@ protected:
             return;
         }
         press_position_ = cursorForPosition(event->position().toPoint()).position();
+        press_point_ = event->position().toPoint();
+        selection_drag_ = false;
         QTextEdit::mousePressEvent(event);
     }
 
@@ -471,16 +554,24 @@ protected:
             event->accept();
             return;
         }
+        if ((event->buttons() & Qt::LeftButton) != 0 &&
+            (event->position().toPoint() - press_point_).manhattanLength() > 3) {
+            selection_drag_ = true;
+        }
         QTextEdit::mouseMoveEvent(event);
     }
 
     void mouseReleaseEvent(QMouseEvent* event) override {
         QTextEdit::mouseReleaseEvent(event);
-        if (event->button() != Qt::LeftButton || textCursor().hasSelection() ||
-            textCursor().position() != press_position_) {
+        if (event->button() != Qt::LeftButton || selection_drag_ ||
+            (event->position().toPoint() - press_point_).manhattanLength() > 3 ||
+            event->modifiers().testFlag(Qt::ShiftModifier)) {
             return;
         }
-        const auto anchor = cursorForPosition(event->position().toPoint()).charFormat().anchorHref();
+        // Qt may select the link label on mouse release. Detect a click by its
+        // gesture/anchor, not by the resulting native selection.
+        const auto anchor = anchorAt(event->position().toPoint());
+        if (anchor.isEmpty() || anchor != anchorAt(press_point_)) return;
         if (anchor.startsWith(QStringLiteral("moonmark-copy:"))) {
             const auto index = anchor.sliced(QStringLiteral("moonmark-copy:").size()).toInt();
             if (index >= 0 && index < static_cast<int>(code_sources_.size())) {
@@ -1126,6 +1217,8 @@ private:
     QPointF autoscroll_pointer_;
     int quote_depth_ = 0;
     int press_position_ = 0;
+    QPoint press_point_;
+    bool selection_drag_ = false;
     int zoom_percent_ = 100;
     quint64 construction_us_ = 0;
     quint64 document_construction_count_ = 0;
@@ -1222,21 +1315,31 @@ public:
             });
             return;
         }
+        if (mode == QStringLiteral("style")) {
+            QTimer::singleShot(180, this, [this] {
+                const bool ok = document_->testDocumentStyle() && document_->testSelectionCopy();
+                std::fprintf(stdout, "MOONMARK_SMOKE document_style=%s\n", ok ? "ok" : "failed");
+                std::fflush(stdout);
+                QCoreApplication::exit(ok ? 0 : 11);
+            });
+            return;
+        }
         if (mode == QStringLiteral("render")) {
             QTimer::singleShot(180, this, [this] {
                 const auto counters = api_->backend_counters(backend_);
                 const bool selection_copy_ok = document_->testSelectionCopy();
+                const bool code_copy_ok = document_->testCodeCopy();
                 const bool ok = !current_path_.isEmpty() && document_->plainText().size() > 40 &&
                                 counters.parse_count == 1 && counters.load_count == 1 &&
-                                document_->constructionCount() == 1 && selection_copy_ok;
+                                document_->constructionCount() == 1 && selection_copy_ok && code_copy_ok;
                 std::fprintf(stdout,
-                             "MOONMARK_SMOKE render=%s chars=%lld construction_us=%llu parse=%llu load=%llu selection_copy=%s\n",
+                             "MOONMARK_SMOKE render=%s chars=%lld construction_us=%llu parse=%llu load=%llu selection_copy=%s code_copy=%s\n",
                              ok ? "ok" : "failed",
                              static_cast<long long>(document_->plainText().size()),
                              static_cast<unsigned long long>(document_->constructionMicros()),
                              static_cast<unsigned long long>(counters.parse_count),
                              static_cast<unsigned long long>(counters.load_count),
-                             selection_copy_ok ? "ok" : "failed");
+                             selection_copy_ok ? "ok" : "failed", code_copy_ok ? "ok" : "failed");
                 std::fflush(stdout);
                 QCoreApplication::exit(ok ? 0 : 4);
             });
@@ -1546,6 +1649,7 @@ private:
         more->setToolTip(QStringLiteral("Document actions"));
         more->setFixedWidth(32);
         auto* menu = new QMenu(more);
+        menu->setObjectName(QStringLiteral("documentMenu"));
         reload_action_ = menu->addAction(QStringLiteral("Reload\tF5"), this,
                                          [this] { reloadDocument(); });
         menu->addAction(QStringLiteral("Reset zoom"), this,
@@ -1801,6 +1905,8 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
         const auto argument = QString::fromLocal8Bit(qt_arguments[static_cast<std::size_t>(index)]);
         if (argument == QStringLiteral("--smoke-render")) {
             smoke_mode = QStringLiteral("render");
+        } else if (argument == QStringLiteral("--smoke-style")) {
+            smoke_mode = QStringLiteral("style");
         } else if (argument == QStringLiteral("--smoke-icon")) {
             smoke_mode = QStringLiteral("icon");
         } else if (argument == QStringLiteral("--smoke-snapshot")) {

@@ -31,6 +31,10 @@ fn qt_frontend_smoke_matrix() {
     let output = run_smoke("--smoke-render", "code-block-quality.md");
     assert!(output.contains("render=ok"), "{output}");
     assert!(output.contains("selection_copy=ok"), "{output}");
+    assert!(output.contains("code_copy=ok"), "{output}");
+
+    let output = run_smoke("--smoke-style", "document-tables.md");
+    assert!(output.contains("document_style=ok"), "{output}");
 
     let output = run_smoke("--smoke-layout", "layout-transitions.md");
     assert!(output.contains("layout=ok"), "{output}");
