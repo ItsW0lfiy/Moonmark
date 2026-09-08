@@ -36,6 +36,8 @@ cargo build --release
 
 `build.rs` discovers Qt, compiles the C++20 adapter with warnings enabled, links Qt dynamically, embeds the Windows icon, and stages Qt DLLs/plugins/assets beside Cargo's executable. Build failure on either language fails Cargo.
 
+Moonmark development milestones use prerelease versions such as `0.1.0-dev.1`, `0.1.0-dev.2`, and `0.1.0-dev.3`. During milestone work, each coherent source, UI, test, or documentation change receives its own descriptive commit before unrelated work begins. Commits are not squashed merely to shorten history, and pushing still requires separate explicit user approval.
+
 ## Fixtures and benchmarks
 
 ```powershell
@@ -45,6 +47,14 @@ cargo run --release --bin renderer_benchmark -- fixtures\generated\large-text.md
 ```
 
 Generated fixtures are ignored. Native integration smoke tests are part of `cargo test` on Windows.
+
+For a deterministic rendered client-area snapshot during UI review:
+
+```powershell
+cargo run -- fixtures\moonmark-visual-test.md --smoke-snapshot
+```
+
+The ignored snapshot is written to `target/moonmark-ui.png`. It supplements rather than replaces physical taskbar, Alt+Tab, DPI, and multi-monitor checks.
 
 ## Linux
 

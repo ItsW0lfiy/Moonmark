@@ -1,6 +1,6 @@
 # Next steps
 
-The native Rust/C++/Qt renderer foundation is in place. The next milestone should harden the Windows desktop presentation without changing its architecture:
+The native Rust/C++/Qt renderer foundation and `0.1.0-dev.2` clean Qt shell are in place. The next milestone should harden physical Windows integration without changing this architecture:
 
 1. Physically validate title-bar dragging, edge/corner resize, taskbar behavior, Alt+Space, snapping, mixed-DPI multi-monitor movement, and both fullscreen restoration paths on Windows 10 and Windows 11.
 2. Add focused automated file-watcher/reload coverage and expose clearer user-facing reload state.
@@ -11,4 +11,3 @@ The native Rust/C++/Qt renderer foundation is in place. The next milestone shoul
 7. Decide Moonmark's own distribution license and complete legal review of Qt LGPL obligations before publishing binaries.
 
 Android and the optional integrated editor remain later, separately designed milestones.
-

@@ -26,7 +26,7 @@ ordinary Markdown file
 ## C++/Qt ownership
 
 - QApplication and the Qt Widgets shell
-- custom title bar, toolbar controls, status, empty state, file dialog, drag/drop, and file watcher
+- custom title bar, contextual document command strip, F12 diagnostics row, empty state, file dialog, drag/drop, and file watcher
 - native QTextDocument construction through QTextCursor, QTextFrame, QTextTable, and native formats
 - selection, clipboard, link activation, zoom/reflow, scrollbars, and middle-button autoscroll
 - presentation-time image placement and UI-thread conversion of Rust RGBA results to QImage
@@ -39,5 +39,7 @@ ordinary Markdown file
 This narrow C ABI was selected over CXX-Qt because the existing framework-neutral presentation model already serializes cleanly, the ABI keeps ownership explicit, it avoids generated framework glue, and it preserves one process with Cargo in control. JSON is used only as an in-process presentation-data encoding; it is not a network or browser protocol.
 
 Qt types do not enter the semantic model. The current adapter is replaceable, while QTextDocument supplies mature selection, layout, accessibility plumbing, and copy behavior.
+
+`native/qt/moon_style.*` owns the New Moon palette, dimensions, and Qt interaction-state styling. `native/qt/moon_title_bar.*` owns title-bar move, double-click, and system-menu behavior. Markdown construction remains in the presentation adapter and does not depend on either component.
 
 Windows is primary. Shared Rust logic and most Qt Widgets code are portable; Win32 message handling is confined to the Qt adapter's guarded Windows sections. The Linux build path uses `pkg-config` for Qt6Widgets discovery, but compilation and behavior still require physical validation.
