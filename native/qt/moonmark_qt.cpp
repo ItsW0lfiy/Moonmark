@@ -1436,8 +1436,6 @@ private:
         title_layout->setSpacing(9);
 
         auto* symbol = new QLabel;
-        QPixmap symbol_pixmap(
-            applicationAssetPath(QStringLiteral("assets/branding/moonmark-symbol.png")));
         symbol->setPixmap(QApplication::windowIcon().pixmap(18, 18));
         symbol->setFixedSize(20, 20);
         symbol->setAccessibleName(QStringLiteral("Moonmark"));
@@ -1523,26 +1521,40 @@ private:
         stack_->setObjectName(QStringLiteral("documentStack"));
         auto* empty = new QWidget;
         auto* empty_layout = new QVBoxLayout(empty);
-        empty_layout->setAlignment(Qt::AlignCenter);
+        empty_layout->addStretch(2);
+        auto* prompt = new QWidget;
+        auto* prompt_layout = new QVBoxLayout(prompt);
+        prompt_layout->setContentsMargins(0, 0, 0, 0);
+        prompt_layout->setSpacing(10);
+        auto* identity = new QHBoxLayout;
+        identity->setSpacing(12);
         auto* empty_symbol = new QLabel;
-        empty_symbol->setPixmap(symbol_pixmap.scaled(86, 86, Qt::KeepAspectRatio,
-                                                     Qt::SmoothTransformation));
-        empty_symbol->setAlignment(Qt::AlignCenter);
+        empty_symbol->setPixmap(QApplication::windowIcon().pixmap(32, 32));
         auto* empty_title = new QLabel(QStringLiteral("Moonmark"));
         empty_title->setObjectName(QStringLiteral("emptyTitle"));
-        empty_title->setAlignment(Qt::AlignCenter);
-        auto* empty_hint = new QLabel(QStringLiteral("Open or drop a Markdown file to begin"));
+        identity->addWidget(empty_symbol);
+        identity->addWidget(empty_title);
+        identity->addStretch();
+        prompt_layout->addLayout(identity);
+        auto* empty_hint = new QLabel(QStringLiteral("Drop a Markdown file here to read it."));
         empty_hint->setObjectName(QStringLiteral("emptyHint"));
-        empty_hint->setAlignment(Qt::AlignCenter);
+        prompt_layout->addWidget(empty_hint);
         auto* empty_open = new MoonButton(QStringLiteral("Open Markdown file"));
+        empty_open->setObjectName(QStringLiteral("emptyOpen"));
         empty_open->setAccessibleName(QStringLiteral("Open Markdown file"));
+        empty_open->setToolTip(QStringLiteral("Ctrl+O"));
         QObject::connect(empty_open, &QPushButton::clicked, this, [this] { chooseDocument(); });
-        empty_layout->addWidget(empty_symbol, 0, Qt::AlignCenter);
-        empty_layout->addSpacing(12);
-        empty_layout->addWidget(empty_title);
-        empty_layout->addWidget(empty_hint);
-        empty_layout->addSpacing(15);
-        empty_layout->addWidget(empty_open, 0, Qt::AlignCenter);
+        auto* open_row = new QHBoxLayout;
+        open_row->setContentsMargins(0, 4, 0, 0);
+        open_row->addWidget(empty_open);
+        auto* shortcut = new QLabel(QStringLiteral("Ctrl+O"));
+        shortcut->setObjectName(QStringLiteral("emptyHint"));
+        open_row->addSpacing(8);
+        open_row->addWidget(shortcut);
+        open_row->addStretch();
+        prompt_layout->addLayout(open_row);
+        empty_layout->addWidget(prompt, 0, Qt::AlignHCenter);
+        empty_layout->addStretch(3);
         stack_->addWidget(empty);
 
         document_ = new DocumentView(api_, backend_);

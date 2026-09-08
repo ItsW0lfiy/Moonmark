@@ -36,7 +36,9 @@ void apply(QApplication& application) {
         #documentTitle { color: #b8b8b8; font-size: 12px; font-weight: 500; }
         #zoomValue { color: #929292; font-size: 11px; }
         #documentStack { background: #0e0e0e; }
-        #emptyTitle { font-size: 25px; font-weight: 600; color: #f0f0f0; }
+        #emptyTitle { font-size: 20px; font-weight: 500; color: #d8d8d8; }
+        #emptyOpen { background: #1c1c1c; color: #dedede; padding: 5px 12px; }
+        #emptyOpen:hover { background: #303030; color: #f0f0f0; }
         #emptyHint { color: #858585; margin-top: 4px; }
         #diagnosticsBar { background: #101010; border-top: 1px solid #282828; color: #777777; font-size: 11px; }
         QTextEdit { background: #0e0e0e; border: 0; selection-background-color: #484848; selection-color: #f0f0f0; }
