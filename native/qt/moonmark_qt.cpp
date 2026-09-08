@@ -1,4 +1,5 @@
 #include "moonmark_qt.h"
+#include "moon_style.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
@@ -75,24 +76,7 @@
 
 namespace {
 
-namespace colour {
-constexpr auto background = "#080808";
-constexpr auto shell = "#0c0c0c";
-constexpr auto document = "#0e0e0e";
-constexpr auto surface = "#141414";
-constexpr auto raised = "#1c1c1c";
-constexpr auto hover = "#242424";
-constexpr auto active = "#303030";
-constexpr auto border = "#303030";
-constexpr auto border_strong = "#464646";
-constexpr auto text = "#e8e8e8";
-constexpr auto secondary = "#b0b0b0";
-constexpr auto muted = "#7c7c7c";
-constexpr auto silver = "#c8c8c8";
-constexpr auto bright = "#f0f0f0";
-constexpr auto selection = "#484848";
-constexpr auto error = "#be6868";
-} // namespace colour
+namespace colour = moonmark::style::colour;
 
 namespace command_kind {
 constexpr int begin_paragraph = 1;
@@ -1648,52 +1632,7 @@ private:
 };
 
 void applyMoonmarkStyle(QApplication& application) {
-    QPalette palette;
-    palette.setColor(QPalette::Window, QColor(colour::background));
-    palette.setColor(QPalette::WindowText, QColor(colour::text));
-    palette.setColor(QPalette::Base, QColor(colour::document));
-    palette.setColor(QPalette::AlternateBase, QColor(colour::surface));
-    palette.setColor(QPalette::Text, QColor(colour::text));
-    palette.setColor(QPalette::Button, QColor(colour::surface));
-    palette.setColor(QPalette::ButtonText, QColor(colour::text));
-    palette.setColor(QPalette::Highlight, QColor(colour::selection));
-    palette.setColor(QPalette::HighlightedText, QColor(colour::bright));
-    palette.setColor(QPalette::Link, QColor(colour::silver));
-    palette.setColor(QPalette::LinkVisited, QColor(colour::secondary));
-    palette.setColor(QPalette::Disabled, QPalette::Text, QColor(colour::muted));
-    palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(colour::muted));
-    application.setPalette(palette);
-    application.setStyleSheet(QStringLiteral(R"(
-        QWidget { background: #080808; color: #e8e8e8; font-family: "Segoe UI Variable Text", "Segoe UI"; }
-        #titleBar { background: #0c0c0c; border-bottom: 1px solid #303030; }
-        QPushButton { background: #141414; border: 1px solid #303030; border-radius: 5px; padding: 4px 11px; }
-        QPushButton:hover { background: #242424; border-color: #464646; }
-        QPushButton:pressed { background: #303030; }
-        QPushButton:focus { border: 1px solid #c8c8c8; }
-        QPushButton:disabled { color: #525252; background: #101010; border-color: #242424; }
-        #captionButton { border: 0; border-radius: 0; background: transparent; font-size: 15px; padding: 0; }
-        #captionButton:hover { background: #242424; }
-        #captionButton:pressed { background: #303030; }
-        #closeButton:hover { background: #612f2f; color: #ffffff; }
-        #documentTitle { color: #c8c8c8; font-weight: 600; }
-        #zoomLeft { border-top-right-radius: 0; border-bottom-right-radius: 0; padding: 0; }
-        #zoomRight { border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 0; }
-        #zoomValue { background: #141414; border-top: 1px solid #303030; border-bottom: 1px solid #303030; color: #b0b0b0; }
-        #documentStack { background: #0e0e0e; }
-        #emptyTitle { font-size: 25px; font-weight: 600; color: #f0f0f0; }
-        #emptyHint { color: #7c7c7c; margin-top: 4px; }
-        #statusBar { background: #0c0c0c; border-top: 1px solid #303030; color: #7c7c7c; font-size: 11px; }
-        QTextEdit { background: #0e0e0e; border: 0; selection-background-color: #484848; selection-color: #f0f0f0; }
-        QScrollBar:vertical { background: #0e0e0e; width: 13px; margin: 0; }
-        QScrollBar::handle:vertical { background: #464646; min-height: 30px; border-radius: 5px; margin: 2px; }
-        QScrollBar::handle:vertical:hover { background: #5c5c5c; }
-        QScrollBar:horizontal { background: #0e0e0e; height: 13px; margin: 0; }
-        QScrollBar::handle:horizontal { background: #464646; min-width: 30px; border-radius: 5px; margin: 2px; }
-        QScrollBar::handle:horizontal:hover { background: #5c5c5c; }
-        QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
-        QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
-        QToolTip { background: #1c1c1c; color: #e8e8e8; border: 1px solid #464646; padding: 4px; }
-    )"));
+    moonmark::style::apply(application);
 }
 
 } // namespace
