@@ -94,6 +94,21 @@ bool DocumentZoom::matches(int percent) const {
             actual.fontItalic() != span.format.fontItalic() ||
             actual.anchorHref() != span.format.anchorHref()) return false;
     }
+    for (const auto& block : blocks_) {
+        const auto actual = document_->findBlock(block.position).blockFormat();
+        if (std::abs(actual.leftMargin() - block.format.leftMargin() * ratio) > 0.001 ||
+            std::abs(actual.bottomMargin() - block.format.bottomMargin() * ratio) > 0.001 ||
+            actual.lineHeight() != block.format.lineHeight()) return false;
+    }
+    for (const auto& frame : frames_) {
+        if (!frame.frame || std::abs(frame.frame->frameFormat().padding() - frame.format.padding() * ratio) > 0.001)
+            return false;
+    }
+    for (const auto& cell : cells_) {
+        const auto actual = cell.cell.format().toTableCellFormat();
+        if (std::abs(actual.leftPadding() - cell.format.leftPadding() * ratio) > 0.001 ||
+            std::abs(actual.topPadding() - cell.format.topPadding() * ratio) > 0.001) return false;
+    }
     return true;
 }
 } // namespace moonmark::qt

@@ -1354,6 +1354,39 @@ public:
     }
 
     void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("navigation")) {
+            QTimer::singleShot(300, this, [this] {
+                const auto before = api_->backend_counters(backend_);
+                const auto constructions = document_->constructionCount();
+                auto* tree = sidebar_->findChild<QTreeWidget*>();
+                auto* item = tree->topLevelItem(tree->topLevelItemCount() - 1);
+                while (item && item->childCount() > 0) item = item->child(item->childCount() - 1);
+                bool ok = sidebar_->isVisible() && item != nullptr;
+                if (item) {
+                    tree->setCurrentItem(item);
+                    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+                    QApplication::sendEvent(tree, &enter);
+                    ok &= document_->verticalScrollBar()->value() > 0;
+                }
+                resize(800, 700);
+                ok &= sidebar_->isHidden();
+                resize(1280, 820);
+                ok &= sidebar_->isVisible();
+                enterFullscreen();
+                ok &= sidebar_->isHidden() && title_bar_->isHidden();
+                leaveFullscreen();
+                ok &= sidebar_->isVisible() && title_bar_->isVisible();
+                const auto after = api_->backend_counters(backend_);
+                ok &= before.parse_count == after.parse_count && before.load_count == after.load_count &&
+                      before.image_request_count == after.image_request_count && constructions == document_->constructionCount();
+                std::fprintf(stdout, "MOONMARK_SMOKE navigation=%s outline_keyboard=%s transition_counters=%s\n",
+                             ok ? "ok" : "failed", item ? "present" : "missing",
+                             constructions == document_->constructionCount() ? "stable" : "changed");
+                std::fflush(stdout);
+                QCoreApplication::exit(ok ? 0 : 13);
+            });
+            return;
+        }
         if (mode == QStringLiteral("zoom")) {
             QTimer::singleShot(300, this, [this] {
                 const bool ok = document_->testZoom();
@@ -1379,10 +1412,16 @@ public:
             const auto height = qEnvironmentVariableIntValue("MOONMARK_SNAPSHOT_HEIGHT");
             if (width > 0 && height > 0) resize(width, height);
             QTimer::singleShot(500, this, [this] {
+                const auto zoom = qEnvironmentVariableIntValue("MOONMARK_SNAPSHOT_ZOOM");
+                if (zoom > 0) changeZoom(zoom - document_->zoomPercent());
+                if (qEnvironmentVariable("MOONMARK_SNAPSHOT_NO_SIDEBAR") == QStringLiteral("1")) {
+                    sidebar_requested_ = false;
+                    updateSidebarVisibility();
+                }
                 const auto scroll = qEnvironmentVariableIntValue("MOONMARK_SNAPSHOT_SCROLL");
                 if (scroll > 0) document_->verticalScrollBar()->setValue(scroll);
-                if (qEnvironmentVariableIsSet("MOONMARK_SNAPSHOT_SELECTION")) document_->selectAll();
-                if (qEnvironmentVariableIsSet("MOONMARK_SNAPSHOT_MENU")) {
+                if (qEnvironmentVariable("MOONMARK_SNAPSHOT_SELECTION") == QStringLiteral("1")) document_->selectAll();
+                if (qEnvironmentVariable("MOONMARK_SNAPSHOT_MENU") == QStringLiteral("1")) {
                     auto* menu = findChild<QMenu*>(QStringLiteral("documentMenu"));
                     menu->popup(mapToGlobal(QPoint(this->width() - 300, 40)));
                     menu->setActiveAction(menu->actions().first());
@@ -1393,10 +1432,10 @@ public:
                         if (!character.isLetterOrNumber() && character != QLatin1Char('-'))
                             character = QLatin1Char('_');
                     }
-                    QDir::current().mkpath(QStringLiteral("target/visual-dev3"));
+                    QDir::current().mkpath(QStringLiteral("target/visual-dev4"));
                     const auto output = QDir::current().absoluteFilePath(
-                        QStringLiteral("target/visual-dev3/%1.png").arg(name));
-                    const auto pixels = qEnvironmentVariableIsSet("MOONMARK_SNAPSHOT_MENU")
+                        QStringLiteral("target/visual-dev4/%1.png").arg(name));
+                    const auto pixels = qEnvironmentVariable("MOONMARK_SNAPSHOT_MENU") == QStringLiteral("1")
                         ? findChild<QMenu*>(QStringLiteral("documentMenu"))->grab() : grab();
                     const bool saved = pixels.save(output, "PNG");
                     std::fprintf(stdout, "MOONMARK_SMOKE snapshot=%s path=%s\n",
@@ -1579,7 +1618,7 @@ public:
                     return;
                 }
                 const bool ok = finished && document_->failedImageDecodes() == 0 &&
-                                document_->loadedImages() > 0;
+                                document_->loadedImages() > 0 && document_->testZoom();
                 const auto counters = api_->backend_counters(backend_);
                 std::fprintf(stdout,
                              "MOONMARK_SMOKE images=%s discovered=%d loaded=%d failed=%d pending=%d requests=%llu cache_bytes=%llu elapsed_ms=%lld\n",
@@ -2063,6 +2102,8 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
             smoke_mode = QStringLiteral("style");
         } else if (argument == QStringLiteral("--smoke-zoom")) {
             smoke_mode = QStringLiteral("zoom");
+        } else if (argument == QStringLiteral("--smoke-navigation")) {
+            smoke_mode = QStringLiteral("navigation");
         } else if (argument == QStringLiteral("--smoke-icon")) {
             smoke_mode = QStringLiteral("icon");
         } else if (argument == QStringLiteral("--smoke-snapshot")) {
