@@ -299,8 +299,14 @@ public:
         cursor.endEditBlock();
         construction_us_ = static_cast<quint64>(timer.nsecsElapsed() / 1000);
         document_construction_count_++;
+        QTextCursor start(next);
+        start.movePosition(QTextCursor::Start);
+        setTextCursor(start);
         verticalScrollBar()->setValue(0);
-        QTimer::singleShot(0, this, [this] { queueVisibleImages(); });
+        QTimer::singleShot(0, this, [this] {
+            verticalScrollBar()->setValue(0);
+            queueVisibleImages();
+        });
     }
 
     [[nodiscard]] QString title() const { return title_; }
