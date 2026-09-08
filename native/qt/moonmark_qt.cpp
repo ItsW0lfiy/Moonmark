@@ -1,6 +1,7 @@
 #include "moonmark_qt.h"
 #include "moon_style.h"
 #include "moon_title_bar.h"
+#include "document_zoom.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
@@ -334,6 +335,9 @@ public:
             buildBlocks(cursor, index, -1, 0);
         }
         cursor.endEditBlock();
+        zoom_layout_.capture(next);
+        if (zoom_percent_ != 100) zoom_layout_.apply(zoom_percent_);
+        applyDocumentWidth();
         construction_us_ = static_cast<quint64>(timer.nsecsElapsed() / 1000);
         document_construction_count_++;
         QTextCursor start(next);
@@ -471,22 +475,55 @@ public:
     }
 
     void changeZoom(int delta) {
-        const int previous = zoom_percent_;
-        zoom_percent_ = std::clamp(zoom_percent_ + delta, 60, 220);
-        if (zoom_percent_ == previous) {
-            return;
-        }
-        const int point_steps = (zoom_percent_ - previous) / 10;
-        if (point_steps > 0) {
-            zoomIn(point_steps);
-        } else {
-            zoomOut(-point_steps);
-        }
+        const int percent = std::clamp(zoom_percent_ + delta, 60, 220);
+        if (percent == zoom_percent_) return;
+        const auto selection = textCursor();
+        const auto anchor = cursorForPosition(QPoint(0, 0));
+        const int anchor_y = cursorRect(anchor).top();
+        const bool at_top = verticalScrollBar()->value() == 0;
+        zoom_percent_ = percent;
+        setUpdatesEnabled(false);
+        zoom_layout_.apply(percent);
         applyDocumentWidth();
         resizeLoadedImages();
+        setTextCursor(selection);
+        verticalScrollBar()->setValue(at_top ? 0 : verticalScrollBar()->value() +
+                                        cursorRect(anchor).top() - anchor_y);
+        setUpdatesEnabled(true);
     }
 
     [[nodiscard]] int zoomPercent() const { return zoom_percent_; }
+
+    bool testZoom() {
+        const auto before = api_->backend_counters(backend_);
+        const auto constructions = constructionCount();
+        const auto text_before = plainText();
+        auto selection = textCursor();
+        selection.setPosition(3);
+        selection.setPosition(std::min(30, document()->characterCount() - 1), QTextCursor::KeepAnchor);
+        setTextCursor(selection);
+        bool ok = true;
+        for (const int percent : {100, 125, 150, 100, 80, 100}) {
+            QElapsedTimer timer;
+            timer.start();
+            changeZoom(percent - zoomPercent());
+            const bool metrics = zoom_layout_.matches(percent);
+            const bool retained = textCursor().position() == selection.position() &&
+                                  textCursor().anchor() == selection.anchor();
+            ok &= metrics && retained && plainText() == text_before;
+            std::fprintf(stdout, "ZOOM percent=%d metrics=%s selection=%s height=%.1f elapsed_us=%lld\n",
+                         percent, metrics ? "ok" : "failed", retained ? "ok" : "failed",
+                         document()->size().height(), static_cast<long long>(timer.nsecsElapsed() / 1000));
+        }
+        const auto after = api_->backend_counters(backend_);
+        ok &= before.parse_count == after.parse_count && before.load_count == after.load_count &&
+              before.image_request_count == after.image_request_count && constructions == constructionCount();
+        std::fprintf(stdout, "MOONMARK_SMOKE zoom=%s parse_delta=%llu load_delta=%llu construction_delta=%llu image_request_delta=%llu\n",
+                     ok ? "ok" : "failed", after.parse_count - before.parse_count,
+                     after.load_count - before.load_count, constructionCount() - constructions,
+                     after.image_request_count - before.image_request_count);
+        return ok;
+    }
 
 protected:
     void paintEvent(QPaintEvent* event) override {
@@ -510,7 +547,7 @@ protected:
                 bottom = cursorRect(QTextCursor(next)).top();
             }
             for (int level = 0; level < depth; ++level) {
-                const int x = first.left() - 14 - level * 22;
+                const int x = first.left() - static_cast<int>((14 + level * 22) * zoom_percent_ / 100.0);
                 painter.drawLine(x, first.top() - 3, x, bottom);
             }
         }
@@ -1053,7 +1090,8 @@ private:
 
     int effectiveSideMargin() const {
         const int base = settings_.value("documentPadding").toInt(48);
-        return std::min(base, std::max(20, (viewport()->width() - 400) / 12));
+        return std::min(static_cast<int>(base * zoom_percent_ / 100.0),
+                        std::max(20, (viewport()->width() - 400) / 12));
     }
 
     void applyDocumentWidth() {
@@ -1064,8 +1102,8 @@ private:
         const auto margin = static_cast<qreal>(effectiveSideMargin());
         format.setLeftMargin(margin);
         format.setRightMargin(margin);
-        format.setTopMargin(22.0);
-        format.setBottomMargin(34.0);
+        format.setTopMargin(22.0 * zoom_percent_ / 100.0);
+        format.setBottomMargin(34.0 * zoom_percent_ / 100.0);
         document()->rootFrame()->setFrameFormat(format);
     }
 
@@ -1163,7 +1201,8 @@ private:
             cursor.setPosition(occurrence.position);
             cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
             auto format = cursor.charFormat().toImageFormat();
-            const int width = std::min(occurrence.natural_width, availableImageWidth());
+            const int width = std::min(static_cast<int>(occurrence.natural_width * zoom_percent_ / 100.0),
+                                       availableImageWidth());
             const double scale = occurrence.natural_width > 0
                                      ? static_cast<double>(width) / occurrence.natural_width
                                      : 1.0;
@@ -1220,6 +1259,7 @@ private:
     QPoint press_point_;
     bool selection_drag_ = false;
     int zoom_percent_ = 100;
+    moonmark::qt::DocumentZoom zoom_layout_;
     quint64 construction_us_ = 0;
     quint64 document_construction_count_ = 0;
 };
@@ -1278,6 +1318,14 @@ public:
     }
 
     void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("zoom")) {
+            QTimer::singleShot(300, this, [this] {
+                const bool ok = document_->testZoom();
+                std::fflush(stdout);
+                QCoreApplication::exit(ok ? 0 : 12);
+            });
+            return;
+        }
         if (mode == QStringLiteral("icon")) {
             QTimer::singleShot(50, this, [] {
                 const auto icon = QGuiApplication::windowIcon();
@@ -1917,6 +1965,8 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
             smoke_mode = QStringLiteral("render");
         } else if (argument == QStringLiteral("--smoke-style")) {
             smoke_mode = QStringLiteral("style");
+        } else if (argument == QStringLiteral("--smoke-zoom")) {
+            smoke_mode = QStringLiteral("zoom");
         } else if (argument == QStringLiteral("--smoke-icon")) {
             smoke_mode = QStringLiteral("icon");
         } else if (argument == QStringLiteral("--smoke-snapshot")) {
