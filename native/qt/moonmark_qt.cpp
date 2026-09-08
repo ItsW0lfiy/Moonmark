@@ -1813,13 +1813,13 @@ private:
         identity->setSpacing(12);
         auto* empty_symbol = new QLabel;
         empty_symbol->setPixmap(QApplication::windowIcon().pixmap(32, 32));
-        auto* empty_title = new QLabel(QStringLiteral("Moonmark"));
+        auto* empty_title = new QLabel(QStringLiteral("Ready to read"));
         empty_title->setObjectName(QStringLiteral("emptyTitle"));
         identity->addWidget(empty_symbol);
         identity->addWidget(empty_title);
         identity->addStretch();
         prompt_layout->addLayout(identity);
-        auto* empty_hint = new QLabel(QStringLiteral("Drop a Markdown file here to read it."));
+        auto* empty_hint = new QLabel(QStringLiteral("Open a Markdown file, or drop one here."));
         empty_hint->setObjectName(QStringLiteral("emptyHint"));
         prompt_layout->addWidget(empty_hint);
         auto* empty_open = new MoonButton(QStringLiteral("Open Markdown file"));
