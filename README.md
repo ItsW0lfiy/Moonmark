@@ -19,7 +19,7 @@ Markdown source
 
 Rust owns file loading, Comrak parsing, semantic/presentation models, syntax classification, image policy/decoding/cache, diagnostics, and framework-neutral window state. C++ owns the Qt widget shell, native QTextDocument construction, selection/clipboard interaction, document layout, and Windows presentation integration. The boundary transfers UTF-8 JSON, IDs, owned byte buffers, counters, and function pointers; it does not use a second process or network IPC.
 
-The `0.1.0-dev.2` New Moon shell separates quiet window identity from contextual document actions: the frameless title bar contains only the Moonmark symbol, current filename, and native window controls; Open, Reload, image context, and zoom appear in a compact strip only while a document is open. The document remains broad, desktop-first, and achromatic. Syntax highlighting is the only color exception and deliberately avoids blue, cyan, teal, navy, and blue-gray.
+The `0.1.0-dev.3` New Moon redesign uses one quiet 40px titlebar with the embedded symbol, left-aligned filename, Open/zoom, secondary-actions menu, and native caption controls. The separate command strip is gone. Broad document tables use subtle horizontal separators rather than cell grids, code remains one graphite surface, and quotes use narrow neutral markers. Syntax highlighting remains the only document-color exception and avoids blue, cyan, teal, navy, and blue-gray.
 
 Moonmark is file-oriented rather than vault-oriented: it reads an ordinary Markdown file and releases the read handle. Relative images resolve from that document; valid parent, absolute, and `file:///` paths are allowed after canonicalization. Remote images remain disabled.
 
