@@ -16,6 +16,7 @@
 #include <QFrame>
 #include <QGuiApplication>
 #include <QImage>
+#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -27,6 +28,7 @@
 #include <QPainter>
 #include <QPalette>
 #include <QPointer>
+#include <QPixmap>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScreen>
@@ -173,6 +175,26 @@ QString applicationAssetPath(const QString& relative) {
         return packaged;
     }
     return relative;
+}
+
+QIcon applicationIcon() {
+#ifdef _WIN32
+    QIcon icon;
+    const auto module = GetModuleHandleW(nullptr);
+    for (const int size : {16, 24, 32, 48, 64, 128, 256}) {
+        const auto handle = static_cast<HICON>(LoadImageW(
+            module, MAKEINTRESOURCEW(1), IMAGE_ICON, size, size, LR_DEFAULTCOLOR));
+        if (handle == nullptr) {
+            continue;
+        }
+        icon.addPixmap(QPixmap::fromImage(QImage::fromHICON(handle)));
+        DestroyIcon(handle);
+    }
+    if (!icon.isNull()) {
+        return icon;
+    }
+#endif
+    return QIcon(applicationAssetPath(QStringLiteral("assets/icons/moonmark.ico")));
 }
 
 Command parseCommand(const QJsonValue& value) {
@@ -1077,7 +1099,7 @@ public:
         window_state_ = api_->window_state_new();
         setObjectName(QStringLiteral("moonmarkWindow"));
         setWindowTitle(QStringLiteral("Moonmark"));
-        setWindowIcon(QIcon(applicationAssetPath(QStringLiteral("assets/icons/moonmark.ico"))));
+        setWindowIcon(applicationIcon());
         setWindowFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowSystemMenuHint |
                        Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint);
         setAttribute(Qt::WA_NativeWindow);
@@ -1696,6 +1718,7 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
     }
     int qt_argc = argc;
     QApplication application(qt_argc, qt_arguments.data());
+    application.setWindowIcon(applicationIcon());
     applyMoonmarkStyle(application);
     MoonmarkWindow window(api);
     window.show();
