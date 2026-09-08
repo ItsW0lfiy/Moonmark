@@ -1132,14 +1132,27 @@ public:
             return;
         }
         if (mode == QStringLiteral("snapshot")) {
-            QTimer::singleShot(350, this, [this] {
-                const auto output =
-                    QDir::current().absoluteFilePath(QStringLiteral("target/moonmark-ui.png"));
-                const bool saved = grab().save(output, "PNG");
-                std::fprintf(stdout, "MOONMARK_SMOKE snapshot=%s path=%s\n",
-                             saved ? "ok" : "failed", output.toUtf8().constData());
-                std::fflush(stdout);
-                QCoreApplication::exit(saved ? 0 : 10);
+            const auto width = qEnvironmentVariableIntValue("MOONMARK_SNAPSHOT_WIDTH");
+            const auto height = qEnvironmentVariableIntValue("MOONMARK_SNAPSHOT_HEIGHT");
+            if (width > 0 && height > 0) resize(width, height);
+            QTimer::singleShot(500, this, [this] {
+                const auto scroll = qEnvironmentVariableIntValue("MOONMARK_SNAPSHOT_SCROLL");
+                if (scroll > 0) document_->verticalScrollBar()->setValue(scroll);
+                QTimer::singleShot(300, this, [this] {
+                    auto name = qEnvironmentVariable("MOONMARK_SNAPSHOT_NAME", "moonmark-ui");
+                    for (auto& character : name) {
+                        if (!character.isLetterOrNumber() && character != QLatin1Char('-'))
+                            character = QLatin1Char('_');
+                    }
+                    QDir::current().mkpath(QStringLiteral("target/visual-dev3"));
+                    const auto output = QDir::current().absoluteFilePath(
+                        QStringLiteral("target/visual-dev3/%1.png").arg(name));
+                    const bool saved = grab().save(output, "PNG");
+                    std::fprintf(stdout, "MOONMARK_SMOKE snapshot=%s path=%s\n",
+                                 saved ? "ok" : "failed", output.toUtf8().constData());
+                    std::fflush(stdout);
+                    QCoreApplication::exit(saved ? 0 : 10);
+                });
             });
             return;
         }
@@ -1719,6 +1732,15 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
     QApplication application(qt_argc, qt_arguments.data());
     application.setWindowIcon(applicationIcon());
     applyMoonmarkStyle(application);
+    // Smoke tests must not update the user's application settings.
+    for (const auto& argument : argument_storage) {
+        if (argument.startsWith("--smoke-")) {
+            QSettings::setDefaultFormat(QSettings::IniFormat);
+            QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                              QDir::current().absoluteFilePath("target/native-settings"));
+            break;
+        }
+    }
     MoonmarkWindow window(api);
     window.show();
     QString smoke_mode;
