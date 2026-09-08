@@ -13,14 +13,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Moonmark release build failed.' }
 
     if (Test-Path $packageRoot) { Remove-Item -Recurse -Force -LiteralPath $packageRoot }
-    New-Item -ItemType Directory -Force -Path (Join-Path $packageRoot 'platforms'), (Join-Path $packageRoot 'assets/branding'), (Join-Path $packageRoot 'assets/icons'), (Join-Path $packageRoot 'licenses') | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $packageRoot 'platforms'), (Join-Path $packageRoot 'assets/branding'), (Join-Path $packageRoot 'licenses') | Out-Null
     Copy-Item -LiteralPath 'target/release/moonmark.exe' -Destination (Join-Path $packageRoot 'Moonmark.exe')
     foreach ($name in 'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Widgets.dll') {
         Copy-Item -LiteralPath (Join-Path $qtRoot "bin/$name") -Destination $packageRoot
     }
     Copy-Item -LiteralPath (Join-Path $qtRoot 'plugins/platforms/qwindows.dll') -Destination (Join-Path $packageRoot 'platforms')
     Copy-Item -LiteralPath 'assets/branding/moonmark-symbol.png' -Destination (Join-Path $packageRoot 'assets/branding')
-    Copy-Item -LiteralPath 'assets/icons/moonmark.ico' -Destination (Join-Path $packageRoot 'assets/icons')
     Copy-Item -LiteralPath 'assets/deployment/qt.conf' -Destination (Join-Path $packageRoot 'qt.conf')
     Copy-Item -LiteralPath 'THIRD_PARTY_NOTICES.txt' -Destination $packageRoot
     Copy-Item -LiteralPath 'docs/licenses/Qt-LGPL-3.0-only.txt' -Destination (Join-Path $packageRoot 'licenses')
