@@ -1297,6 +1297,12 @@ public:
             QTimer::singleShot(500, this, [this] {
                 const auto scroll = qEnvironmentVariableIntValue("MOONMARK_SNAPSHOT_SCROLL");
                 if (scroll > 0) document_->verticalScrollBar()->setValue(scroll);
+                if (qEnvironmentVariableIsSet("MOONMARK_SNAPSHOT_SELECTION")) document_->selectAll();
+                if (qEnvironmentVariableIsSet("MOONMARK_SNAPSHOT_MENU")) {
+                    auto* menu = findChild<QMenu*>(QStringLiteral("documentMenu"));
+                    menu->popup(mapToGlobal(QPoint(this->width() - 300, 40)));
+                    menu->setActiveAction(menu->actions().first());
+                }
                 QTimer::singleShot(300, this, [this] {
                     auto name = qEnvironmentVariable("MOONMARK_SNAPSHOT_NAME", "moonmark-ui");
                     for (auto& character : name) {
@@ -1306,7 +1312,9 @@ public:
                     QDir::current().mkpath(QStringLiteral("target/visual-dev3"));
                     const auto output = QDir::current().absoluteFilePath(
                         QStringLiteral("target/visual-dev3/%1.png").arg(name));
-                    const bool saved = grab().save(output, "PNG");
+                    const auto pixels = qEnvironmentVariableIsSet("MOONMARK_SNAPSHOT_MENU")
+                        ? findChild<QMenu*>(QStringLiteral("documentMenu"))->grab() : grab();
+                    const bool saved = pixels.save(output, "PNG");
                     std::fprintf(stdout, "MOONMARK_SMOKE snapshot=%s path=%s\n",
                                  saved ? "ok" : "failed", output.toUtf8().constData());
                     std::fflush(stdout);
