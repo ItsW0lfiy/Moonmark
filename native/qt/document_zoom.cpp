@@ -75,8 +75,20 @@ void DocumentZoom::apply(int percent) {
         cursor.setPosition(span.position + span.length, QTextCursor::KeepAnchor);
         cursor.setCharFormat(scaled(span.format, ratio));
     }
-    for (const auto& frame : frames_)
-        if (frame.frame) frame.frame->setFrameFormat(scaled(frame.format, ratio));
+    for (const auto& frame : frames_) {
+        if (!frame.frame) continue;
+        if (auto* table = qobject_cast<QTextTable*>(frame.frame.data())) {
+            auto format = scaled(frame.format.toTableFormat(), ratio);
+            auto widths = format.columnWidthConstraints();
+            for (auto& width : widths)
+                if (width.type() == QTextLength::FixedLength)
+                    width = QTextLength(QTextLength::FixedLength, width.rawValue() * ratio);
+            format.setColumnWidthConstraints(widths);
+            table->setFormat(format);
+        } else {
+            frame.frame->setFrameFormat(scaled(frame.format, ratio));
+        }
+    }
     for (auto& cell : cells_) cell.cell.setFormat(scaled(cell.format, ratio));
     cursor.endEditBlock();
 }

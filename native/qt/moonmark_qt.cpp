@@ -1001,6 +1001,42 @@ private:
             rows += commands_[scan].kind == command_kind::begin_row ? 1 : 0;
         }
         const int columns = std::max(1, static_cast<int>(begin.number));
+        std::vector<bool> numeric(static_cast<std::size_t>(columns), true);
+        std::vector<qreal> minimum_width(static_cast<std::size_t>(columns), 48);
+        const QFontMetricsF cell_metrics(baseCharacterFormat(11.75).font());
+        int scan_column = -1;
+        bool scan_header = false;
+        QString cell_text;
+        for (std::size_t scan = index; scan < commands_.size() &&
+             commands_[scan].kind != command_kind::end_table; ++scan) {
+            const auto& part = commands_[scan];
+            if (part.kind == command_kind::begin_row) {
+                scan_column = -1;
+                scan_header = (part.flags & text_style::header) != 0;
+            } else if (part.kind == command_kind::begin_cell) {
+                ++scan_column;
+                cell_text.clear();
+            } else if (part.kind == command_kind::text) {
+                cell_text += part.text;
+            } else if (part.kind == command_kind::end_cell && scan_column >= 0 && scan_column < columns) {
+                const auto slot = static_cast<std::size_t>(scan_column);
+                minimum_width[slot] = std::max(minimum_width[slot], cell_metrics.horizontalAdvance(cell_text) + 36);
+                if (!scan_header) {
+                    bool number = false;
+                    cell_text.toDouble(&number);
+                    numeric[slot] = numeric[slot] && number;
+                }
+            }
+        }
+        QList<QTextLength> widths;
+        const bool has_text_column = std::find(numeric.begin(), numeric.end(), false) != numeric.end();
+        for (int column = 0; column < columns; ++column) {
+            const auto slot = static_cast<std::size_t>(column);
+            widths.append(numeric[slot] && has_text_column
+                ? QTextLength(QTextLength::FixedLength, minimum_width[slot])
+                : QTextLength(QTextLength::VariableLength, 0));
+        }
+        table_format.setColumnWidthConstraints(widths);
         auto* table = cursor.insertTable(std::max(1, rows), columns, table_format);
         int row = 0;
         while (index < commands_.size() && commands_[index].kind != command_kind::end_table) {
