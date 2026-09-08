@@ -24,8 +24,7 @@ inline constexpr auto error = "#be6868";
 } // namespace colour
 
 namespace metric {
-inline constexpr int title_bar_height = 46;
-inline constexpr int command_bar_height = 42;
+inline constexpr int title_bar_height = 40;
 inline constexpr int control_height = 30;
 inline constexpr int small_radius = 5;
 inline constexpr int surface_radius = 7;

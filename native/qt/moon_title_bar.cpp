@@ -3,6 +3,7 @@
 #include "moon_style.h"
 
 #include <QMouseEvent>
+#include <QPainter>
 #include <QWindow>
 
 #ifdef _WIN32
@@ -11,6 +12,52 @@
 #endif
 
 namespace moonmark::qt {
+
+CaptionButton::CaptionButton(Action action, QWidget* parent)
+    : QAbstractButton(parent), action_(action) {
+    setFixedSize(44, style::metric::title_bar_height);
+    setFocusPolicy(Qt::StrongFocus);
+    setAttribute(Qt::WA_Hover);
+    setAccessibleName(action == Action::Minimize ? QStringLiteral("Minimize") :
+                      action == Action::Close ? QStringLiteral("Close") :
+                                               QStringLiteral("Maximize"));
+    setToolTip(accessibleName());
+}
+
+void CaptionButton::setMaximized(bool maximized) {
+    maximized_ = maximized;
+    setAccessibleName(maximized ? QStringLiteral("Restore") : QStringLiteral("Maximize"));
+    setToolTip(accessibleName());
+    update();
+}
+
+void CaptionButton::paintEvent(QPaintEvent*) {
+    QPainter painter(this);
+    if (underMouse() || isDown()) {
+        painter.fillRect(rect(), QColor(action_ == Action::Close ? "#612f2f" :
+                                       isDown() ? style::colour::active : style::colour::hover));
+    }
+    if (hasFocus()) {
+        painter.setPen(QColor(style::colour::silver));
+        painter.drawRect(rect().adjusted(3, 3, -4, -4));
+    }
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(QColor(style::colour::secondary), 1.1));
+    const QPointF origin(width() / 2.0 - 5, height() / 2.0 - 5);
+    painter.translate(origin);
+    if (action_ == Action::Minimize) {
+        painter.drawLine(QPointF(0, 5), QPointF(10, 5));
+    } else if (action_ == Action::Close) {
+        painter.drawLine(QPointF(1, 1), QPointF(9, 9));
+        painter.drawLine(QPointF(9, 1), QPointF(1, 9));
+    } else if (maximized_) {
+        painter.drawPolyline(QPolygonF{QPointF(3, 2), QPointF(3, 0), QPointF(10, 0),
+                                       QPointF(10, 7), QPointF(8, 7)});
+        painter.drawRect(QRectF(0, 3, 7, 7));
+    } else {
+        painter.drawRect(QRectF(0, 0, 10, 10));
+    }
+}
 
 MoonTitleBar::MoonTitleBar(QWidget* window) : QWidget(window), window_(window) {
     setFixedHeight(style::metric::title_bar_height);
