@@ -12,7 +12,7 @@ impl Default for Settings {
         Self {
             body_font_points: 12.75,
             document_padding: 48,
-            line_height_percent: 168,
+            line_height_percent: 150,
             image_cache_bytes: 128 * 1024 * 1024,
             image_workers: 4,
         }

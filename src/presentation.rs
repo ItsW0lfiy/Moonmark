@@ -82,7 +82,7 @@ impl Default for PresentationSettings {
         Self {
             body_font_points: 12.75,
             document_padding: 48,
-            line_height_percent: 168,
+            line_height_percent: 150,
         }
     }
 }

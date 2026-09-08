@@ -79,6 +79,7 @@
 namespace {
 
 namespace colour = moonmark::style::colour;
+constexpr int quote_depth_property = QTextFormat::UserProperty + 1;
 
 namespace command_kind {
 constexpr int begin_paragraph = 1;
@@ -203,7 +204,7 @@ QTextCharFormat baseCharacterFormat(double points = 12.75) {
     return format;
 }
 
-QTextBlockFormat bodyBlockFormat(int line_height = 168) {
+QTextBlockFormat bodyBlockFormat(int line_height = 150) {
     QTextBlockFormat format;
     format.setTopMargin(1.0);
     format.setBottomMargin(8.0);
@@ -211,17 +212,17 @@ QTextBlockFormat bodyBlockFormat(int line_height = 168) {
     return format;
 }
 
-QImage placeholderImage(const QString& message, int width = 900, int height = 120,
+QImage placeholderImage(const QString& message, int width = 900, int height = 72,
                         bool failed = false) {
     QImage image(width, height, QImage::Format_RGBA8888);
     image.fill(QColor(colour::surface));
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(QColor(colour::border), 2));
-    painter.drawRoundedRect(image.rect().adjusted(1, 1, -2, -2), 7, 7);
+    painter.setPen(QPen(QColor(colour::border_strong), 2));
+    painter.drawLine(1, 10, 1, height - 10);
     painter.setPen(QColor(failed ? colour::secondary : colour::muted));
     painter.setFont(QFont(QStringLiteral("Segoe UI"), 11));
-    painter.drawText(image.rect().adjusted(22, 12, -22, -12), Qt::AlignCenter | Qt::TextWordWrap,
+    painter.drawText(image.rect().adjusted(22, 12, -22, -12), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextWordWrap,
                      message);
     return image;
 }
@@ -407,6 +408,33 @@ public:
     [[nodiscard]] int zoomPercent() const { return zoom_percent_; }
 
 protected:
+    void paintEvent(QPaintEvent* event) override {
+        QTextEdit::paintEvent(event);
+        QPainter painter(viewport());
+        painter.setPen(QPen(QColor(colour::border_strong), 2));
+        // Qt retains layout, selection, and accessibility; only quote markers are painted.
+        auto block = cursorForPosition(QPoint(0, 0)).block();
+        for (; block.isValid(); block = block.next()) {
+            QTextCursor cursor(block);
+            const auto first = cursorRect(cursor);
+            if (first.top() > viewport()->height()) break;
+            const int depth = block.blockFormat().intProperty(quote_depth_property);
+            if (depth == 0 || block.text().isEmpty()) continue;
+            cursor.movePosition(QTextCursor::EndOfBlock);
+            auto bottom = cursorRect(cursor).bottom() + 4;
+            const auto next = block.next();
+            if (next.isValid() &&
+                next.blockFormat().intProperty(quote_depth_property) == depth &&
+                !next.text().isEmpty()) {
+                bottom = cursorRect(QTextCursor(next)).top();
+            }
+            for (int level = 0; level < depth; ++level) {
+                const int x = first.left() - 14 - level * 22;
+                painter.drawLine(x, first.top() - 3, x, bottom);
+            }
+        }
+    }
+
     void resizeEvent(QResizeEvent* event) override {
         QTextEdit::resizeEvent(event);
         applyDocumentWidth();
@@ -520,7 +548,10 @@ private:
                 break;
             case command_kind::begin_quote:
                 ++index;
+                ++quote_depth_;
                 buildBlocks(cursor, index, command_kind::end_quote, depth + 1);
+                --quote_depth_;
+                cursor.setBlockFormat(bodyBlockFormat());
                 break;
             case command_kind::begin_table:
                 buildTable(cursor, index, depth);
@@ -547,14 +578,14 @@ private:
         if (depth > 0) {
             format.setLeftMargin(format.leftMargin() + depth * 22.0);
             format.setRightMargin(format.rightMargin() + 8.0);
-            format.setBackground(QColor(colour::surface));
         }
+        format.setProperty(quote_depth_property, quote_depth_);
         cursor.setBlockFormat(format);
     }
 
     void buildParagraph(QTextCursor& cursor, std::size_t& index, bool heading, int level, int depth,
                         const QString& anchor = {}) {
-        auto block = bodyBlockFormat(settings_.value("lineHeightPercent").toInt(168));
+        auto block = bodyBlockFormat(settings_.value("lineHeightPercent").toInt(150));
         double points = settings_.value("bodyFontPoints").toDouble(12.75);
         if (heading) {
             static constexpr double scales[] = {1.85, 1.55, 1.34, 1.18, 1.08, 1.0};
@@ -605,6 +636,7 @@ private:
             return;
         }
         auto format = baseCharacterFormat(points);
+        if (quote_depth_ > 0) format.setForeground(QColor(colour::secondary));
         if (heading || (command.flags & text_style::strong) != 0) {
             format.setFontWeight(heading ? QFont::DemiBold : QFont::Bold);
         }
@@ -651,14 +683,17 @@ private:
             while (index < commands_.size() && commands_[index].kind != command_kind::end_item) {
                 if (commands_[index].kind == command_kind::begin_paragraph) {
                     ++index;
-                    auto block = bodyBlockFormat(settings_.value("lineHeightPercent").toInt(168));
+                    auto block = bodyBlockFormat(settings_.value("lineHeightPercent").toInt(150));
                     block.setLeftMargin((depth + 1) * 24.0);
-                    block.setTextIndent(-19.0);
+                    block.setTextIndent(marker_inserted ? 0.0 : -22.0);
+                    QTextOption::Tab tab;
+                    tab.position = 22;
+                    block.setTabPositions({tab});
                     block.setBottomMargin(4.0);
                     beginBlock(cursor, block, 0);
                     auto marker_format = baseCharacterFormat();
                     marker_format.setForeground(QColor(colour::secondary));
-                    cursor.insertText(marker + QStringLiteral("  "), marker_format);
+                    if (!marker_inserted) cursor.insertText(marker + QLatin1Char('\t'), marker_format);
                     marker_inserted = true;
                     while (index < commands_.size() &&
                            commands_[index].kind != command_kind::end_block) {
@@ -698,9 +733,7 @@ private:
         }
         QTextFrameFormat frame_format;
         frame_format.setBackground(QColor(colour::surface));
-        frame_format.setBorder(1.0);
-        frame_format.setBorderBrush(QColor(colour::border));
-        frame_format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+        frame_format.setBorder(0);
         frame_format.setPadding(14.0);
         frame_format.setTopMargin(6.0);
         frame_format.setBottomMargin(13.0);
@@ -721,7 +754,7 @@ private:
         inside.setBlockFormat(header_block);
         auto language = baseCharacterFormat(9.5);
         language.setForeground(QColor(colour::muted));
-        language.setFontWeight(QFont::DemiBold);
+        language.setFontWeight(QFont::Normal);
         inside.insertText(command.extra.isEmpty() ? QStringLiteral("code") : command.extra.toLower(),
                           language);
         inside.insertText(QStringLiteral("   ·   "), language);
@@ -729,7 +762,7 @@ private:
         copy.setAnchor(true);
         copy.setAnchorHref(QStringLiteral("moonmark-copy:%1").arg(code_index));
         copy.setForeground(QColor(colour::silver));
-        copy.setFontUnderline(true);
+        copy.setFontUnderline(false);
         inside.insertText(QStringLiteral("Copy"), copy);
         inside.insertBlock();
 
@@ -767,8 +800,8 @@ private:
     void buildRule(QTextCursor& cursor, int depth) {
         auto block = bodyBlockFormat(100);
         block.setLineHeight(1, QTextBlockFormat::FixedHeight);
-        block.setTopMargin(11);
-        block.setBottomMargin(13);
+        block.setTopMargin(10);
+        block.setBottomMargin(10);
         block.setLeftMargin(depth * 22.0);
         block.setBackground(QColor(colour::border));
         beginBlock(cursor, block, 0);
@@ -814,8 +847,8 @@ private:
                 auto cell = table->cellAt(row, std::min(column, columns - 1));
                 auto cell_format = cell.format().toTableCellFormat();
                 const bool header = (row_command.flags & text_style::header) != 0;
-                cell_format.setTopPadding(7);
-                cell_format.setBottomPadding(7);
+                cell_format.setTopPadding(6);
+                cell_format.setBottomPadding(6);
                 cell_format.setLeftPadding(column == 0 ? 0 : 12);
                 cell_format.setRightPadding(column == columns - 1 ? 0 : 12);
                 if (row < rows - 1) {
@@ -826,7 +859,7 @@ private:
                 }
                 cell.setFormat(cell_format);
                 auto cell_cursor = cell.firstCursorPosition();
-                auto cell_block = bodyBlockFormat(140);
+                auto cell_block = bodyBlockFormat(125);
                 cell_block.setTopMargin(0);
                 cell_block.setBottomMargin(0);
                 cell_block.setAlignment(cell_command.number == 2 ? Qt::AlignRight :
@@ -885,16 +918,16 @@ private:
 
         const auto resource = QUrl(QStringLiteral("moonmark-image://%1").arg(id));
         document()->addResource(QTextDocument::ImageResource, resource,
-                                placeholderImage(message, 900, 120, !allowed));
+                                placeholderImage(message, 900, 72, !allowed));
         QTextImageFormat format;
         format.setName(resource.toString());
         format.setWidth(std::min(900, availableImageWidth()));
-        format.setHeight(120);
+        format.setHeight(72);
         format.setToolTip(command.text);
         const int position = cursor.position();
         cursor.insertImage(format);
         image_occurrences_.push_back(
-            ImageOccurrence{id, position, false, false, !allowed, 900, 120});
+            ImageOccurrence{id, position, false, false, !allowed, 900, 72});
     }
 
     void buildRawHtml(QTextCursor& cursor, const Command& command, int depth) {
@@ -915,7 +948,7 @@ private:
 
     int effectiveSideMargin() const {
         const int base = settings_.value("documentPadding").toInt(48);
-        return std::max(base, (viewport()->width() - 1760) / 2);
+        return std::min(base, std::max(20, (viewport()->width() - 400) / 12));
     }
 
     void applyDocumentWidth() {
@@ -926,7 +959,7 @@ private:
         const auto margin = static_cast<qreal>(effectiveSideMargin());
         format.setLeftMargin(margin);
         format.setRightMargin(margin);
-        format.setTopMargin(30.0);
+        format.setTopMargin(22.0);
         format.setBottomMargin(34.0);
         document()->rootFrame()->setFrameFormat(format);
     }
@@ -980,7 +1013,7 @@ private:
                 result.height == 0) {
                 document()->addResource(QTextDocument::ImageResource, resource,
                                         placeholderImage(QStringLiteral("Image failed · %1").arg(error),
-                                                         900, 120, true));
+                                                         900, 72, true));
                 for (auto& occurrence : image_occurrences_) {
                     if (occurrence.id == result.id) {
                         occurrence.failed = true;
@@ -1077,6 +1110,7 @@ private:
     bool autoscroll_active_ = false;
     QPointF autoscroll_anchor_;
     QPointF autoscroll_pointer_;
+    int quote_depth_ = 0;
     int press_position_ = 0;
     int zoom_percent_ = 100;
     quint64 construction_us_ = 0;
@@ -1124,6 +1158,7 @@ public:
         title_label_->setToolTip(current_path_);
         setWindowTitle(QStringLiteral("%1 — Moonmark").arg(file.fileName()));
         stack_->setCurrentWidget(document_);
+        document_->setFocus(Qt::OtherFocusReason);
         reload_action_->setEnabled(true);
         if (!fullscreen_) {
             document_actions_->show();
@@ -1570,6 +1605,7 @@ private:
         open_row->addWidget(shortcut);
         open_row->addStretch();
         prompt_layout->addLayout(open_row);
+        empty_open->setFocus(Qt::OtherFocusReason);
         empty_layout->addWidget(prompt, 0, Qt::AlignHCenter);
         empty_layout->addStretch(3);
         stack_->addWidget(empty);
