@@ -59,6 +59,8 @@
 #include <QTimer>
 #include <QUrl>
 #include <QWindow>
+#include <QWheelEvent>
+#include <QTreeWidget>
 
 #include <algorithm>
 #include <cmath>
@@ -494,9 +496,11 @@ public:
         verticalScrollBar()->setValue(at_top ? 0 : verticalScrollBar()->value() +
                                         cursorRect(anchor).top() - anchor_y);
         setUpdatesEnabled(true);
+        if (zoomChanged) zoomChanged(zoom_percent_);
     }
 
     [[nodiscard]] int zoomPercent() const { return zoom_percent_; }
+    std::function<void(int)> zoomChanged;
 
     bool testZoom() {
         const auto before = api_->backend_counters(backend_);
@@ -629,7 +633,24 @@ protected:
         }
     }
 
+    void wheelEvent(QWheelEvent* event) override {
+        if (event->modifiers().testFlag(Qt::ControlModifier)) {
+            if (event->angleDelta().y() != 0) changeZoom(event->angleDelta().y() > 0 ? 10 : -10);
+            event->accept();
+            return;
+        }
+        QTextEdit::wheelEvent(event);
+    }
+
     void keyPressEvent(QKeyEvent* event) override {
+        if (event->modifiers().testFlag(Qt::ControlModifier)) {
+            const int key = event->key();
+            if (key == Qt::Key_Plus || key == Qt::Key_Equal || key == Qt::Key_Minus || key == Qt::Key_0) {
+                changeZoom(key == Qt::Key_0 ? 100 - zoom_percent_ : key == Qt::Key_Minus ? -10 : 10);
+                event->accept();
+                return;
+            }
+        }
         if (event->key() == Qt::Key_Escape && autoscroll_active_) {
             stopAutoscroll();
             event->accept();
@@ -1745,10 +1766,18 @@ private:
         zoom_out_ = new MoonButton(QStringLiteral("−"));
         zoom_out_->setFixedWidth(28);
         zoom_out_->setAccessibleName(QStringLiteral("Zoom out"));
-        zoom_label_ = new QLabel(QStringLiteral("100%"));
+        zoom_label_ = new MoonButton(QStringLiteral("100%"));
         zoom_label_->setObjectName(QStringLiteral("zoomValue"));
-        zoom_label_->setAlignment(Qt::AlignCenter);
-        zoom_label_->setFixedWidth(40);
+        zoom_label_->setFixedWidth(52);
+        zoom_label_->setAccessibleName(QStringLiteral("Choose document zoom"));
+        zoom_label_->setToolTip(QStringLiteral("Choose zoom · Ctrl+mouse wheel · Ctrl+0 resets"));
+        auto* zoom_menu = new QMenu(zoom_label_);
+        for (const int percent : {80, 100, 125, 150, 200})
+            zoom_menu->addAction(QStringLiteral("%1%").arg(percent), this,
+                                 [this, percent] { changeZoom(percent - document_->zoomPercent()); });
+        QObject::connect(zoom_label_, &QPushButton::clicked, this, [this, zoom_menu] {
+            zoom_menu->popup(zoom_label_->mapToGlobal(QPoint(0, zoom_label_->height() + 4)));
+        });
         zoom_in_ = new MoonButton(QStringLiteral("+"));
         zoom_in_->setFixedWidth(28);
         zoom_in_->setAccessibleName(QStringLiteral("Zoom in"));
@@ -1844,6 +1873,9 @@ private:
         stack_->addWidget(empty);
 
         document_ = new DocumentView(api_, backend_);
+        document_->zoomChanged = [this](int percent) {
+            zoom_label_->setText(QStringLiteral("%1%").arg(percent));
+        };
         stack_->addWidget(document_);
         root->addWidget(stack_, 1);
 
@@ -1970,7 +2002,7 @@ private:
     moonmark::qt::CaptionButton* minimize_ = nullptr;
     moonmark::qt::CaptionButton* maximize_ = nullptr;
     moonmark::qt::CaptionButton* close_ = nullptr;
-    QLabel* zoom_label_ = nullptr;
+    MoonButton* zoom_label_ = nullptr;
     QLabel* title_symbol_ = nullptr;
     ElidingLabel* title_label_ = nullptr;
     QLabel* diagnostics_bar_ = nullptr;
