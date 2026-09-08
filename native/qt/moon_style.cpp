@@ -27,14 +27,24 @@ void apply(QApplication& application) {
     application.setStyleSheet(QStringLiteral(R"(
         QWidget { color: #e8e8e8; font-family: "Segoe UI Variable Text", "Segoe UI"; }
         QLabel { background: transparent; }
-        #titleBar { background: #0c0c0c; }
+        #titleBar { background: #101010; border-bottom: 1px solid #222222; }
+        #documentSidebar { background: #101010; border-right: 1px solid #262626; }
+        #sidebarIdentity { color: #e8e8e8; font-size: 17px; font-weight: 600; }
+        #sidebarSection { color: #858585; font-size: 11px; font-weight: 600; padding: 0 6px; }
+        #sidebarFilename { color: #dedede; font-size: 13px; padding: 10px 8px; background: #202020; border-radius: 5px; }
+        #documentSidebar QPushButton { text-align: left; padding-left: 10px; font-size: 14px; }
+        QTreeWidget { background: transparent; border: none; color: #aeaeae; font-size: 13px; outline: 0; }
+        QTreeWidget::item { padding: 7px 4px; border: 1px solid transparent; border-radius: 4px; }
+        QTreeWidget::item:hover { background: #202020; color: #e8e8e8; }
+        QTreeWidget::item:selected { background: #2c2c2c; color: #eeeeee; }
+        QTreeWidget::item:focus { border-color: #aaaaaa; }
         QPushButton { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px 8px; color: #b0b0b0; }
         QPushButton:hover { background: #242424; color: #f0f0f0; }
         QPushButton:pressed { background: #303030; }
         QPushButton:focus { border: 1px solid #c8c8c8; }
         QPushButton:disabled { color: #525252; }
-        #documentTitle { color: #b8b8b8; font-size: 12px; font-weight: 500; }
-        #zoomValue { color: #929292; font-size: 11px; }
+        #documentTitle { color: #b8b8b8; font-size: 13px; font-weight: 500; }
+        #zoomValue { color: #929292; font-size: 12px; }
         #documentStack { background: #0e0e0e; }
         #emptyTitle { font-size: 20px; font-weight: 500; color: #d8d8d8; }
         #emptyOpen { background: #1c1c1c; color: #dedede; padding: 5px 12px; }

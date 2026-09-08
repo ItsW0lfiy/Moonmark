@@ -24,6 +24,8 @@ fn main() {
         "native/qt/moon_style.cpp",
         "native/qt/document_zoom.h",
         "native/qt/document_zoom.cpp",
+        "native/qt/document_sidebar.h",
+        "native/qt/document_sidebar.cpp",
         "native/qt/moon_title_bar.h",
         "native/qt/moon_title_bar.cpp",
         "assets/icons/moonmark.rc",
@@ -85,6 +87,7 @@ fn qt_bridge_build(manifest: &Path) -> cc::Build {
         .file(manifest.join("native/qt/moonmark_qt.cpp"))
         .file(manifest.join("native/qt/moon_style.cpp"))
         .file(manifest.join("native/qt/document_zoom.cpp"))
+        .file(manifest.join("native/qt/document_sidebar.cpp"))
         .file(manifest.join("native/qt/moon_title_bar.cpp"))
         .include(manifest.join("native/qt"))
         .define("MOONMARK_PRODUCT_VERSION", product_version.as_str())

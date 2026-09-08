@@ -2,6 +2,7 @@
 #include "moon_style.h"
 #include "moon_title_bar.h"
 #include "document_zoom.h"
+#include "document_sidebar.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
@@ -1301,7 +1302,8 @@ public:
         api_->buffer_free(buffer);
         document_->load(root);
         current_path_ = file.canonicalFilePath();
-        title_label_->setFullText(file.fileName());
+        title_label_->setFullText(file.dir().dirName() + QStringLiteral("   /   ") + file.fileName());
+        sidebar_->setDocument(file.fileName(), root.value("toc").toArray());
         title_label_->setToolTip(current_path_);
         setWindowTitle(QStringLiteral("%1 — Moonmark").arg(file.fileName()));
         stack_->setCurrentWidget(document_);
@@ -1563,6 +1565,11 @@ public:
     }
 
 protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QWidget::resizeEvent(event);
+        updateSidebarVisibility();
+    }
+
     void keyPressEvent(QKeyEvent* event) override {
         if (event->key() == Qt::Key_F11) {
             toggleFullscreen();
@@ -1650,8 +1657,29 @@ protected:
 #endif
 
 private:
+    void updateSidebarVisibility() {
+        if (sidebar_ == nullptr) return;
+        const bool visible = !fullscreen_ && sidebar_requested_ && (sidebar_explicit_ || width() >= 1000);
+        sidebar_->setVisible(visible);
+        if (open_ != nullptr) open_->setVisible(!visible);
+        if (title_symbol_ != nullptr) title_symbol_->setVisible(!visible);
+    }
+
     void buildUi() {
-        auto* root = new QVBoxLayout(this);
+        auto* shell = new QHBoxLayout(this);
+        shell->setContentsMargins(0, 0, 0, 0);
+        shell->setSpacing(0);
+        sidebar_ = new moonmark::qt::DocumentSidebar;
+        sidebar_->open = [this] { chooseDocument(); };
+        sidebar_->reload = [this] { reloadDocument(); };
+        sidebar_->navigate = [this](const QString& anchor) {
+            document_->scrollToAnchor(anchor);
+            document_->setFocus(Qt::OtherFocusReason);
+        };
+        shell->addWidget(sidebar_);
+        auto* content = new QWidget;
+        shell->addWidget(content, 1);
+        auto* root = new QVBoxLayout(content);
         root->setContentsMargins(0, 0, 0, 0);
         root->setSpacing(0);
 
@@ -1660,12 +1688,28 @@ private:
         title_layout->setContentsMargins(14, 0, 0, 0);
         title_layout->setSpacing(9);
 
-        auto* symbol = new QLabel;
-        symbol->setPixmap(QApplication::windowIcon().pixmap(18, 18));
-        symbol->setFixedSize(20, 20);
-        symbol->setAccessibleName(QStringLiteral("Moonmark"));
-        symbol->setAttribute(Qt::WA_TransparentForMouseEvents);
-        title_layout->addWidget(symbol);
+        auto* navigation = new MoonButton(QString());
+        navigation->setFixedWidth(32);
+        navigation->setAccessibleName(QStringLiteral("Toggle document sidebar"));
+        navigation->setToolTip(QStringLiteral("Show or hide document sidebar"));
+        QPixmap navigation_icon(18, 18);
+        navigation_icon.fill(Qt::transparent);
+        QPainter icon_painter(&navigation_icon);
+        icon_painter.setPen(QPen(QColor(colour::secondary), 1));
+        icon_painter.drawRoundedRect(QRectF(2, 3, 14, 12), 2, 2);
+        icon_painter.drawLine(7, 3, 7, 15);
+        icon_painter.end();
+        navigation->setIcon(QIcon(navigation_icon));
+        QObject::connect(navigation, &QPushButton::clicked, this, [this] {
+            sidebar_requested_ = !sidebar_->isVisible();
+            sidebar_explicit_ = true;
+            updateSidebarVisibility();
+        });
+        title_layout->addWidget(navigation);
+        title_symbol_ = new QLabel;
+        title_symbol_->setPixmap(QApplication::windowIcon().pixmap(18, 18));
+        title_symbol_->setAttribute(Qt::WA_TransparentForMouseEvents);
+        title_layout->addWidget(title_symbol_);
 
         title_label_ = new ElidingLabel(QStringLiteral("Moonmark"));
         title_label_->setObjectName(QStringLiteral("documentTitle"));
@@ -1796,6 +1840,7 @@ private:
         diagnostics_bar_->setContentsMargins(14, 0, 14, 0);
         diagnostics_bar_->hide();
         root->addWidget(diagnostics_bar_);
+        updateSidebarVisibility();
     }
 
 
@@ -1859,6 +1904,7 @@ private:
         api_->window_enter_fullscreen(window_state_);
         fullscreen_ = true;
         title_bar_->hide();
+        sidebar_->hide();
         document_actions_->hide();
         diagnostics_bar_->hide();
         showFullScreen();
@@ -1868,6 +1914,7 @@ private:
         const auto restored = api_->window_leave_fullscreen(window_state_);
         fullscreen_ = false;
         title_bar_->show();
+        updateSidebarVisibility();
         document_actions_->setVisible(!current_path_.isEmpty());
         diagnostics_bar_->setVisible(diagnostics_);
         if (restored == 1 || pre_fullscreen_maximized_) {
@@ -1896,6 +1943,9 @@ private:
     const MoonmarkApiTable* api_ = nullptr;
     void* backend_ = nullptr;
     void* window_state_ = nullptr;
+    moonmark::qt::DocumentSidebar* sidebar_ = nullptr;
+    bool sidebar_requested_ = true;
+    bool sidebar_explicit_ = false;
     moonmark::qt::MoonTitleBar* title_bar_ = nullptr;
     QWidget* document_actions_ = nullptr;
     QStackedWidget* stack_ = nullptr;
@@ -1908,6 +1958,7 @@ private:
     moonmark::qt::CaptionButton* maximize_ = nullptr;
     moonmark::qt::CaptionButton* close_ = nullptr;
     QLabel* zoom_label_ = nullptr;
+    QLabel* title_symbol_ = nullptr;
     ElidingLabel* title_label_ = nullptr;
     QLabel* diagnostics_bar_ = nullptr;
     QFileSystemWatcher* watcher_ = nullptr;
