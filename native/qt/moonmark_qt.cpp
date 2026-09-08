@@ -1,5 +1,6 @@
 #include "moonmark_qt.h"
 #include "moon_style.h"
+#include "moon_title_bar.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
@@ -1039,50 +1040,6 @@ private:
     quint64 document_construction_count_ = 0;
 };
 
-class TitleBar final : public QWidget {
-public:
-    explicit TitleBar(QWidget* window) : QWidget(window), window_(window) {
-        setFixedHeight(moonmark::style::metric::title_bar_height);
-        setObjectName(QStringLiteral("titleBar"));
-    }
-
-protected:
-    void mousePressEvent(QMouseEvent* event) override {
-        if (event->button() == Qt::LeftButton && window_->windowHandle() != nullptr) {
-            window_->windowHandle()->startSystemMove();
-            event->accept();
-            return;
-        }
-#ifdef _WIN32
-        if (event->button() == Qt::RightButton) {
-            const auto global = event->globalPosition().toPoint();
-            const auto handle = reinterpret_cast<HWND>(window_->winId());
-            const auto menu = GetSystemMenu(handle, FALSE);
-            const auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, global.x(),
-                                                global.y(), 0, handle, nullptr);
-            if (command != 0) {
-                PostMessageW(handle, WM_SYSCOMMAND, command, 0);
-            }
-            event->accept();
-            return;
-        }
-#endif
-        QWidget::mousePressEvent(event);
-    }
-
-    void mouseDoubleClickEvent(QMouseEvent* event) override {
-        if (event->button() == Qt::LeftButton) {
-            window_->isMaximized() ? window_->showNormal() : window_->showMaximized();
-            event->accept();
-            return;
-        }
-        QWidget::mouseDoubleClickEvent(event);
-    }
-
-private:
-    QWidget* window_ = nullptr;
-};
-
 class MoonmarkWindow final : public QWidget {
 public:
     explicit MoonmarkWindow(const MoonmarkApiTable* api) : api_(api) {
@@ -1422,7 +1379,7 @@ private:
         root->setContentsMargins(0, 0, 0, 0);
         root->setSpacing(0);
 
-        title_bar_ = new TitleBar(this);
+        title_bar_ = new moonmark::qt::MoonTitleBar(this);
         auto* title_layout = new QHBoxLayout(title_bar_);
         title_layout->setContentsMargins(14, 0, 0, 0);
         title_layout->setSpacing(9);
@@ -1670,7 +1627,7 @@ private:
     const MoonmarkApiTable* api_ = nullptr;
     void* backend_ = nullptr;
     void* window_state_ = nullptr;
-    TitleBar* title_bar_ = nullptr;
+    moonmark::qt::MoonTitleBar* title_bar_ = nullptr;
     QWidget* command_bar_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     DocumentView* document_ = nullptr;
