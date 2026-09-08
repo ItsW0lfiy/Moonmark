@@ -1,0 +1,1732 @@
+#include "moonmark_qt.h"
+
+#include <QAbstractTextDocumentLayout>
+#include <QApplication>
+#include <QBoxLayout>
+#include <QClipboard>
+#include <QCloseEvent>
+#include <QColor>
+#include <QDesktopServices>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
+#include <QFontDatabase>
+#include <QFrame>
+#include <QGuiApplication>
+#include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QMenu>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPalette>
+#include <QPointer>
+#include <QPushButton>
+#include <QResizeEvent>
+#include <QScreen>
+#include <QScrollBar>
+#include <QSettings>
+#include <QStackedWidget>
+#include <QStandardPaths>
+#include <QStyle>
+#include <QTextBlock>
+#include <QTextBlockFormat>
+#include <QTextCharFormat>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextEdit>
+#include <QTextFrame>
+#include <QTextFrameFormat>
+#include <QTextImageFormat>
+#include <QTextListFormat>
+#include <QTextTable>
+#include <QTextTableCell>
+#include <QTextTableFormat>
+#include <QTimer>
+#include <QUrl>
+#include <QWindow>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <limits>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#ifdef _WIN32
+#define NOMINMAX
+#include <dwmapi.h>
+#include <windows.h>
+#include <windowsx.h>
+#endif
+
+namespace {
+
+namespace colour {
+constexpr auto background = "#080808";
+constexpr auto shell = "#0c0c0c";
+constexpr auto document = "#0e0e0e";
+constexpr auto surface = "#141414";
+constexpr auto raised = "#1c1c1c";
+constexpr auto hover = "#242424";
+constexpr auto active = "#303030";
+constexpr auto border = "#303030";
+constexpr auto border_strong = "#464646";
+constexpr auto text = "#e8e8e8";
+constexpr auto secondary = "#b0b0b0";
+constexpr auto muted = "#7c7c7c";
+constexpr auto silver = "#c8c8c8";
+constexpr auto bright = "#f0f0f0";
+constexpr auto selection = "#484848";
+constexpr auto error = "#be6868";
+} // namespace colour
+
+namespace command_kind {
+constexpr int begin_paragraph = 1;
+constexpr int begin_heading = 2;
+constexpr int end_block = 3;
+constexpr int text = 4;
+constexpr int soft_break = 5;
+constexpr int hard_break = 6;
+constexpr int begin_list = 7;
+constexpr int end_list = 8;
+constexpr int begin_item = 9;
+constexpr int end_item = 10;
+constexpr int code_block = 11;
+constexpr int horizontal_rule = 12;
+constexpr int begin_quote = 13;
+constexpr int end_quote = 14;
+constexpr int begin_table = 15;
+constexpr int begin_row = 16;
+constexpr int begin_cell = 17;
+constexpr int end_cell = 18;
+constexpr int end_row = 19;
+constexpr int end_table = 20;
+constexpr int image = 21;
+constexpr int raw_html = 22;
+} // namespace command_kind
+
+namespace text_style {
+constexpr int emphasis = 1;
+constexpr int strong = 2;
+constexpr int strike = 4;
+constexpr int code = 8;
+constexpr int link = 16;
+constexpr int ordered = 32;
+constexpr int checked = 64;
+constexpr int unchecked = 128;
+constexpr int header = 256;
+} // namespace text_style
+
+struct Command {
+    int kind = 0;
+    int level = 0;
+    int flags = 0;
+    QString text;
+    QString target;
+    QString extra;
+    qint64 number = 0;
+    QJsonArray spans;
+};
+
+struct ImageOccurrence {
+    std::uint32_t id = 0;
+    int position = 0;
+    bool requested = false;
+    bool loaded = false;
+    bool failed = false;
+    int natural_width = 0;
+    int natural_height = 0;
+};
+
+QString fromBuffer(const MoonmarkBuffer& buffer) {
+    if (buffer.data == nullptr || buffer.len == 0) {
+        return {};
+    }
+    return QString::fromUtf8(reinterpret_cast<const char*>(buffer.data),
+                             static_cast<qsizetype>(buffer.len));
+}
+
+QJsonObject jsonFromBuffer(const MoonmarkBuffer& buffer) {
+    if (buffer.data == nullptr || buffer.len == 0) {
+        return {};
+    }
+    const auto bytes = QByteArray::fromRawData(reinterpret_cast<const char*>(buffer.data),
+                                               static_cast<qsizetype>(buffer.len));
+    return QJsonDocument::fromJson(bytes).object();
+}
+
+QString applicationAssetPath(const QString& relative) {
+    const auto packaged = QCoreApplication::applicationDirPath() + QLatin1Char('/') + relative;
+    if (QFileInfo::exists(packaged)) {
+        return packaged;
+    }
+    return relative;
+}
+
+Command parseCommand(const QJsonValue& value) {
+    const auto object = value.toObject();
+    return Command{object.value("kind").toInt(),
+                   object.value("level").toInt(),
+                   object.value("flags").toInt(),
+                   object.value("text").toString(),
+                   object.value("target").toString(),
+                   object.value("extra").toString(),
+                   object.value("number").toInteger(),
+                   object.value("spans").toArray()};
+}
+
+QTextCharFormat baseCharacterFormat(double points = 12.75) {
+    QTextCharFormat format;
+    format.setFontFamilies({QStringLiteral("Segoe UI Variable Text"), QStringLiteral("Segoe UI")});
+    format.setFontPointSize(points);
+    format.setForeground(QColor(colour::text));
+    return format;
+}
+
+QTextBlockFormat bodyBlockFormat(int line_height = 168) {
+    QTextBlockFormat format;
+    format.setTopMargin(2.0);
+    format.setBottomMargin(10.0);
+    format.setLineHeight(line_height, QTextBlockFormat::ProportionalHeight);
+    return format;
+}
+
+QImage placeholderImage(const QString& message, int width = 900, int height = 120,
+                        bool failed = false) {
+    QImage image(width, height, QImage::Format_RGBA8888);
+    image.fill(QColor(colour::surface));
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(QColor(colour::border), 2));
+    painter.drawRoundedRect(image.rect().adjusted(1, 1, -2, -2), 7, 7);
+    painter.setPen(QColor(failed ? colour::secondary : colour::muted));
+    painter.setFont(QFont(QStringLiteral("Segoe UI"), 11));
+    painter.drawText(image.rect().adjusted(22, 12, -22, -12), Qt::AlignCenter | Qt::TextWordWrap,
+                     message);
+    return image;
+}
+
+class MoonButton final : public QPushButton {
+public:
+    explicit MoonButton(const QString& text, QWidget* parent = nullptr) : QPushButton(text, parent) {
+        setCursor(Qt::PointingHandCursor);
+        setMinimumHeight(28);
+        setFocusPolicy(Qt::StrongFocus);
+    }
+};
+
+class DocumentView final : public QTextEdit {
+public:
+    explicit DocumentView(const MoonmarkApiTable* api, void* backend, QWidget* parent = nullptr)
+        : QTextEdit(parent), api_(api), backend_(backend) {
+        setReadOnly(true);
+        setAcceptRichText(false);
+        setFrameShape(QFrame::NoFrame);
+        setUndoRedoEnabled(false);
+        setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard |
+                                Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard);
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        setFocusPolicy(Qt::StrongFocus);
+        setAccessibleName(QStringLiteral("Moonmark Markdown document"));
+        viewport()->setMouseTracking(true);
+        document()->setDefaultStyleSheet({});
+        document()->setDocumentMargin(0.0);
+
+        image_poll_.setInterval(15);
+        QObject::connect(&image_poll_, &QTimer::timeout, this, [this] { pollImages(); });
+        QObject::connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
+                         [this] { queueVisibleImages(); });
+
+        autoscroll_.setInterval(16);
+        QObject::connect(&autoscroll_, &QTimer::timeout, this, [this] { autoScrollTick(); });
+    }
+
+    void load(const QJsonObject& root) {
+        QElapsedTimer timer;
+        timer.start();
+        commands_.clear();
+        for (const auto& value : root.value("commands").toArray()) {
+            commands_.push_back(parseCommand(value));
+        }
+        image_occurrences_.clear();
+        image_requested_.clear();
+        code_sources_.clear();
+        title_ = root.value("title").toString(QStringLiteral("Moonmark"));
+        settings_ = root.value("settings").toObject();
+        metrics_ = root.value("metrics").toObject();
+
+        auto* next = new QTextDocument(this);
+        next->setDocumentMargin(0.0);
+        next->setDefaultFont(baseCharacterFormat(settings_.value("bodyFontPoints").toDouble(12.75))
+                                 .font());
+        setDocument(next);
+        applyDocumentWidth();
+
+        QTextCursor cursor(next);
+        cursor.beginEditBlock();
+        const auto error = root.value("error").toString();
+        if (!error.isEmpty()) {
+            auto block = bodyBlockFormat();
+            block.setTopMargin(28);
+            cursor.setBlockFormat(block);
+            auto format = baseCharacterFormat();
+            format.setForeground(QColor(colour::error));
+            cursor.insertText(error, format);
+        } else {
+            std::size_t index = 0;
+            buildBlocks(cursor, index, -1, 0);
+        }
+        cursor.endEditBlock();
+        construction_us_ = static_cast<quint64>(timer.nsecsElapsed() / 1000);
+        document_construction_count_++;
+        verticalScrollBar()->setValue(0);
+        QTimer::singleShot(0, this, [this] { queueVisibleImages(); });
+    }
+
+    [[nodiscard]] QString title() const { return title_; }
+    [[nodiscard]] quint64 constructionMicros() const { return construction_us_; }
+    [[nodiscard]] quint64 constructionCount() const { return document_construction_count_; }
+    [[nodiscard]] int discoveredImages() const {
+        return static_cast<int>(image_occurrences_.size());
+    }
+    [[nodiscard]] int loadedImages() const {
+        return static_cast<int>(std::count_if(image_occurrences_.cbegin(), image_occurrences_.cend(),
+                                              [](const auto& item) { return item.loaded; }));
+    }
+    [[nodiscard]] int failedImageDecodes() const {
+        return static_cast<int>(std::count_if(image_occurrences_.cbegin(), image_occurrences_.cend(),
+                                              [](const auto& item) {
+                                                  return item.requested && item.failed;
+                                              }));
+    }
+    [[nodiscard]] int pendingImageDecodes() const {
+        return static_cast<int>(std::count_if(image_occurrences_.cbegin(), image_occurrences_.cend(),
+                                              [](const auto& item) {
+                                                  return item.requested && !item.loaded && !item.failed;
+                                              }));
+    }
+    [[nodiscard]] QString plainText() const { return document()->toPlainText(); }
+    [[nodiscard]] bool testSelectionCopy() {
+        QTextCursor cursor(document());
+        cursor.select(QTextCursor::Document);
+        setTextCursor(cursor);
+        QKeyEvent copy_event(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
+        QApplication::sendEvent(this, &copy_event);
+        const auto copied = QGuiApplication::clipboard()->text();
+        return copied.size() > 40 && !copied.contains(QChar::ObjectReplacementCharacter) &&
+               !copied.contains(QChar(0xFDD0)) && !copied.contains(QChar(0xFDD1));
+    }
+
+    void queueAllImagesForSmoke() {
+        for (auto& occurrence : image_occurrences_) {
+            if (occurrence.loaded || occurrence.failed || occurrence.requested ||
+                image_requested_.contains(occurrence.id)) {
+                continue;
+            }
+            if (api_->queue_image(backend_, occurrence.id, 1600)) {
+                image_requested_.emplace(occurrence.id, true);
+                for (auto& same : image_occurrences_) {
+                    if (same.id == occurrence.id) {
+                        same.requested = true;
+                    }
+                }
+            }
+        }
+        image_poll_.start();
+    }
+
+    void changeZoom(int delta) {
+        const int previous = zoom_percent_;
+        zoom_percent_ = std::clamp(zoom_percent_ + delta, 60, 220);
+        if (zoom_percent_ == previous) {
+            return;
+        }
+        const int point_steps = (zoom_percent_ - previous) / 10;
+        if (point_steps > 0) {
+            zoomIn(point_steps);
+        } else {
+            zoomOut(-point_steps);
+        }
+        applyDocumentWidth();
+        resizeLoadedImages();
+    }
+
+    [[nodiscard]] int zoomPercent() const { return zoom_percent_; }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QTextEdit::resizeEvent(event);
+        applyDocumentWidth();
+        resizeLoadedImages();
+        QTimer::singleShot(0, this, [this] { queueVisibleImages(); });
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::MiddleButton) {
+            autoscroll_active_ = !autoscroll_active_;
+            autoscroll_anchor_ = event->position();
+            autoscroll_pointer_ = event->position();
+            if (autoscroll_active_) {
+                viewport()->setCursor(Qt::SizeVerCursor);
+                autoscroll_.start();
+            } else {
+                stopAutoscroll();
+            }
+            event->accept();
+            return;
+        }
+        if (autoscroll_active_) {
+            stopAutoscroll();
+            event->accept();
+            return;
+        }
+        press_position_ = cursorForPosition(event->position().toPoint()).position();
+        QTextEdit::mousePressEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (autoscroll_active_) {
+            autoscroll_pointer_ = event->position();
+            event->accept();
+            return;
+        }
+        QTextEdit::mouseMoveEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        QTextEdit::mouseReleaseEvent(event);
+        if (event->button() != Qt::LeftButton || textCursor().hasSelection() ||
+            textCursor().position() != press_position_) {
+            return;
+        }
+        const auto anchor = cursorForPosition(event->position().toPoint()).charFormat().anchorHref();
+        if (anchor.startsWith(QStringLiteral("moonmark-copy:"))) {
+            const auto index = anchor.sliced(QStringLiteral("moonmark-copy:").size()).toInt();
+            if (index >= 0 && index < static_cast<int>(code_sources_.size())) {
+                QGuiApplication::clipboard()->setText(code_sources_[static_cast<std::size_t>(index)]);
+            }
+        } else if (anchor.startsWith(QLatin1Char('#'))) {
+            scrollToAnchor(QUrl::fromPercentEncoding(anchor.sliced(1).toUtf8()));
+        } else {
+            const QUrl url(anchor);
+            if (url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https") ||
+                url.scheme() == QStringLiteral("mailto")) {
+                QDesktopServices::openUrl(url);
+            }
+        }
+    }
+
+    void keyPressEvent(QKeyEvent* event) override {
+        if (event->key() == Qt::Key_Escape && autoscroll_active_) {
+            stopAutoscroll();
+            event->accept();
+            return;
+        }
+        if (event->matches(QKeySequence::Copy) && textCursor().hasSelection()) {
+            auto selected = textCursor().selectedText();
+            selected.replace(QChar::ParagraphSeparator, QLatin1Char('\n'));
+            selected.replace(QChar::LineSeparator, QLatin1Char('\n'));
+            selected.remove(QChar::ObjectReplacementCharacter);
+            selected.remove(QChar(0xFDD0));
+            selected.remove(QChar(0xFDD1));
+            selected.remove(QChar(0x200B));
+            QGuiApplication::clipboard()->setText(selected);
+            event->accept();
+            return;
+        }
+        QTextEdit::keyPressEvent(event);
+    }
+
+private:
+    void buildBlocks(QTextCursor& cursor, std::size_t& index, int stop_kind, int depth) {
+        while (index < commands_.size()) {
+            const auto& command = commands_[index];
+            if (command.kind == stop_kind) {
+                ++index;
+                return;
+            }
+            switch (command.kind) {
+            case command_kind::begin_paragraph:
+                ++index;
+                buildParagraph(cursor, index, false, 0, depth);
+                break;
+            case command_kind::begin_heading:
+                ++index;
+                buildParagraph(cursor, index, true, command.level, depth, command.target);
+                break;
+            case command_kind::begin_list:
+                buildList(cursor, index, depth);
+                break;
+            case command_kind::code_block:
+                buildCodeBlock(cursor, command, depth);
+                ++index;
+                break;
+            case command_kind::horizontal_rule:
+                buildRule(cursor, depth);
+                ++index;
+                break;
+            case command_kind::begin_quote:
+                ++index;
+                buildBlocks(cursor, index, command_kind::end_quote, depth + 1);
+                break;
+            case command_kind::begin_table:
+                buildTable(cursor, index, depth);
+                break;
+            case command_kind::image:
+                buildImage(cursor, command, depth);
+                ++index;
+                break;
+            case command_kind::raw_html:
+                buildRawHtml(cursor, command, depth);
+                ++index;
+                break;
+            default:
+                ++index;
+                break;
+            }
+        }
+    }
+
+    void beginBlock(QTextCursor& cursor, QTextBlockFormat format, int depth) {
+        if (cursor.position() != 0 && !cursor.block().text().isEmpty()) {
+            cursor.insertBlock();
+        }
+        if (depth > 0) {
+            format.setLeftMargin(format.leftMargin() + depth * 22.0);
+            format.setRightMargin(format.rightMargin() + 8.0);
+            format.setBackground(QColor(colour::surface));
+        }
+        cursor.setBlockFormat(format);
+    }
+
+    void buildParagraph(QTextCursor& cursor, std::size_t& index, bool heading, int level, int depth,
+                        const QString& anchor = {}) {
+        auto block = bodyBlockFormat(settings_.value("lineHeightPercent").toInt(168));
+        double points = settings_.value("bodyFontPoints").toDouble(12.75);
+        if (heading) {
+            static constexpr double scales[] = {2.15, 1.72, 1.42, 1.22, 1.08, 1.0};
+            points *= scales[std::clamp(level, 1, 6) - 1];
+            block.setTopMargin(level <= 2 ? 20.0 : 14.0);
+            block.setBottomMargin(level <= 2 ? 11.0 : 8.0);
+            block.setLineHeight(128, QTextBlockFormat::ProportionalHeight);
+        }
+        beginBlock(cursor, block, depth);
+        if (!anchor.isEmpty()) {
+            QTextCharFormat named;
+            named.setAnchor(true);
+            named.setAnchorNames({anchor});
+            cursor.insertText(QString(QChar::ObjectReplacementCharacter), named);
+        }
+        while (index < commands_.size() && commands_[index].kind != command_kind::end_block) {
+            insertInline(cursor, commands_[index], points, heading);
+            ++index;
+        }
+        if (index < commands_.size()) {
+            ++index;
+        }
+        cursor.insertBlock();
+    }
+
+    void insertInline(QTextCursor& cursor, const Command& command, double points, bool heading) {
+        if (command.kind == command_kind::soft_break) {
+            cursor.insertText(QStringLiteral(" "), baseCharacterFormat(points));
+            return;
+        }
+        if (command.kind == command_kind::hard_break) {
+            cursor.insertText(QString(QChar::LineSeparator), baseCharacterFormat(points));
+            return;
+        }
+        if (command.kind == command_kind::image) {
+            buildInlineImage(cursor, command);
+            return;
+        }
+        if (command.kind == command_kind::raw_html) {
+            auto raw = baseCharacterFormat(points * 0.92);
+            raw.setFontFamilies({QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas")});
+            raw.setForeground(QColor(colour::muted));
+            cursor.insertText(command.text, raw);
+            return;
+        }
+        if (command.kind != command_kind::text) {
+            return;
+        }
+        auto format = baseCharacterFormat(points);
+        if (heading || (command.flags & text_style::strong) != 0) {
+            format.setFontWeight(heading ? QFont::DemiBold : QFont::Bold);
+        }
+        if ((command.flags & text_style::emphasis) != 0) {
+            format.setFontItalic(true);
+        }
+        if ((command.flags & text_style::strike) != 0) {
+            format.setFontStrikeOut(true);
+        }
+        if ((command.flags & text_style::code) != 0) {
+            format.setFontFamilies({QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas")});
+            format.setFontPointSize(points * 0.9);
+            format.setBackground(QColor(colour::raised));
+            format.setForeground(QColor(colour::bright));
+        }
+        if ((command.flags & text_style::link) != 0) {
+            format.setAnchor(true);
+            format.setAnchorHref(command.target);
+            format.setForeground(QColor(colour::silver));
+            format.setFontUnderline(true);
+        }
+        cursor.insertText(command.text, format);
+    }
+
+    void buildList(QTextCursor& cursor, std::size_t& index, int depth) {
+        const auto begin = commands_[index++];
+        int item_number = static_cast<int>(begin.number);
+        while (index < commands_.size() && commands_[index].kind != command_kind::end_list) {
+            if (commands_[index].kind != command_kind::begin_item) {
+                ++index;
+                continue;
+            }
+            const auto item = commands_[index++];
+            QString marker = item.text;
+            if ((item.flags & text_style::checked) != 0) {
+                marker = QStringLiteral("☑");
+            } else if ((item.flags & text_style::unchecked) != 0) {
+                marker = QStringLiteral("☐");
+            } else if ((begin.flags & text_style::ordered) != 0) {
+                marker = QString::number(item_number++) + QStringLiteral(".");
+            }
+
+            bool marker_inserted = false;
+            while (index < commands_.size() && commands_[index].kind != command_kind::end_item) {
+                if (commands_[index].kind == command_kind::begin_paragraph) {
+                    ++index;
+                    auto block = bodyBlockFormat(settings_.value("lineHeightPercent").toInt(168));
+                    block.setLeftMargin((depth + 1) * 25.0);
+                    block.setTextIndent(-20.0);
+                    block.setBottomMargin(5.0);
+                    beginBlock(cursor, block, 0);
+                    auto marker_format = baseCharacterFormat();
+                    marker_format.setForeground(QColor(colour::secondary));
+                    cursor.insertText(marker + QStringLiteral("  "), marker_format);
+                    marker_inserted = true;
+                    while (index < commands_.size() &&
+                           commands_[index].kind != command_kind::end_block) {
+                        insertInline(cursor, commands_[index],
+                                     settings_.value("bodyFontPoints").toDouble(12.75), false);
+                        ++index;
+                    }
+                    if (index < commands_.size()) {
+                        ++index;
+                    }
+                    cursor.insertBlock();
+                } else if (commands_[index].kind == command_kind::begin_list) {
+                    buildList(cursor, index, depth + 1);
+                } else {
+                    buildBlocks(cursor, index, command_kind::end_item, depth + 1);
+                }
+            }
+            if (index < commands_.size() && commands_[index].kind == command_kind::end_item) {
+                ++index;
+            }
+            if (!marker_inserted) {
+                auto block = bodyBlockFormat();
+                block.setLeftMargin((depth + 1) * 25.0);
+                beginBlock(cursor, block, 0);
+                cursor.insertText(marker, baseCharacterFormat());
+                cursor.insertBlock();
+            }
+        }
+        if (index < commands_.size()) {
+            ++index;
+        }
+    }
+
+    void buildCodeBlock(QTextCursor& cursor, const Command& command, int depth) {
+        if (cursor.position() != 0 && !cursor.block().text().isEmpty()) {
+            cursor.insertBlock();
+        }
+        QTextFrameFormat frame_format;
+        frame_format.setBackground(QColor(colour::surface));
+        frame_format.setBorder(1.0);
+        frame_format.setBorderBrush(QColor(colour::border));
+        frame_format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+        frame_format.setPadding(14.0);
+        frame_format.setTopMargin(7.0);
+        frame_format.setBottomMargin(16.0);
+        frame_format.setLeftMargin(depth * 22.0);
+        auto* frame = cursor.insertFrame(frame_format);
+        QTextCursor inside(frame);
+
+        const auto code_index = static_cast<int>(code_sources_.size());
+        QString source;
+        for (const auto& span : command.spans) {
+            source += span.toObject().value("text").toString();
+        }
+        code_sources_.push_back(source);
+
+        auto header_block = bodyBlockFormat(115);
+        header_block.setTopMargin(0);
+        header_block.setBottomMargin(5);
+        inside.setBlockFormat(header_block);
+        auto language = baseCharacterFormat(9.5);
+        language.setForeground(QColor(colour::muted));
+        language.setFontWeight(QFont::DemiBold);
+        inside.insertText(command.extra.isEmpty() ? QStringLiteral("code") : command.extra.toLower(),
+                          language);
+        inside.insertText(QStringLiteral("   ·   "), language);
+        auto copy = language;
+        copy.setAnchor(true);
+        copy.setAnchorHref(QStringLiteral("moonmark-copy:%1").arg(code_index));
+        copy.setForeground(QColor(colour::silver));
+        copy.setFontUnderline(true);
+        inside.insertText(QStringLiteral("Copy"), copy);
+        inside.insertBlock();
+
+        auto separator_block = bodyBlockFormat(100);
+        separator_block.setLineHeight(1, QTextBlockFormat::FixedHeight);
+        separator_block.setTopMargin(0);
+        separator_block.setBottomMargin(8);
+        separator_block.setBackground(QColor(colour::border));
+        inside.setBlockFormat(separator_block);
+        inside.insertText(QString(QChar(0x200B)), baseCharacterFormat(1));
+        inside.insertBlock();
+
+        auto code_block = bodyBlockFormat(142);
+        code_block.setTopMargin(0);
+        code_block.setBottomMargin(0);
+        code_block.setNonBreakableLines(true);
+        inside.setBlockFormat(code_block);
+        for (const auto& value : command.spans) {
+            const auto span = value.toObject();
+            QTextCharFormat format;
+            format.setFontFamilies({QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas")});
+            format.setFontPointSize(10.5);
+            format.setForeground(QColor(span.value("red").toInt(), span.value("green").toInt(),
+                                        span.value("blue").toInt()));
+            const int flags = span.value("flags").toInt();
+            format.setFontWeight((flags & 1) != 0 ? QFont::DemiBold : QFont::Normal);
+            format.setFontItalic((flags & 2) != 0);
+            inside.insertText(span.value("text").toString(), format);
+        }
+        cursor = QTextCursor(frame->lastCursorPosition());
+        cursor.movePosition(QTextCursor::End);
+        cursor.insertBlock();
+    }
+
+    void buildRule(QTextCursor& cursor, int depth) {
+        auto block = bodyBlockFormat(100);
+        block.setLineHeight(1, QTextBlockFormat::FixedHeight);
+        block.setTopMargin(16);
+        block.setBottomMargin(19);
+        block.setLeftMargin(depth * 22.0);
+        block.setBackground(QColor(colour::border));
+        beginBlock(cursor, block, 0);
+        cursor.insertText(QString(QChar(0x200B)), baseCharacterFormat(1));
+        cursor.insertBlock();
+    }
+
+    void buildTable(QTextCursor& cursor, std::size_t& index, int depth) {
+        const auto begin = commands_[index++];
+        if (cursor.position() != 0 && !cursor.block().text().isEmpty()) {
+            cursor.insertBlock();
+        }
+        QTextTableFormat table_format;
+        table_format.setBorder(1.0);
+        table_format.setBorderBrush(QColor(colour::border));
+        table_format.setCellPadding(8.0);
+        table_format.setCellSpacing(0.0);
+        table_format.setTopMargin(7.0);
+        table_format.setBottomMargin(16.0);
+        table_format.setLeftMargin(depth * 22.0);
+        int rows = 0;
+        for (std::size_t scan = index; scan < commands_.size() &&
+                                       commands_[scan].kind != command_kind::end_table;
+             ++scan) {
+            rows += commands_[scan].kind == command_kind::begin_row ? 1 : 0;
+        }
+        const int columns = std::max(1, static_cast<int>(begin.number));
+        auto* table = cursor.insertTable(std::max(1, rows), columns, table_format);
+        int row = 0;
+        while (index < commands_.size() && commands_[index].kind != command_kind::end_table) {
+            const auto row_command = commands_[index++];
+            if (row_command.kind != command_kind::begin_row) {
+                continue;
+            }
+            int column = 0;
+            while (index < commands_.size() && commands_[index].kind != command_kind::end_row) {
+                if (commands_[index++].kind != command_kind::begin_cell) {
+                    continue;
+                }
+                auto cell = table->cellAt(row, std::min(column, columns - 1));
+                auto cell_format = cell.format();
+                cell_format.setBackground((row_command.flags & text_style::header) != 0
+                                              ? QColor(colour::raised)
+                                              : QColor(colour::document));
+                cell.setFormat(cell_format);
+                auto cell_cursor = cell.firstCursorPosition();
+                cell_cursor.setBlockFormat(bodyBlockFormat(145));
+                while (index < commands_.size() && commands_[index].kind != command_kind::end_cell) {
+                    insertInline(cell_cursor, commands_[index], 11.25,
+                                 (row_command.flags & text_style::header) != 0);
+                    ++index;
+                }
+                if (index < commands_.size()) {
+                    ++index;
+                }
+                ++column;
+            }
+            if (index < commands_.size()) {
+                ++index;
+            }
+            ++row;
+        }
+        if (index < commands_.size()) {
+            ++index;
+        }
+        cursor = QTextCursor(table->lastCursorPosition());
+        cursor.movePosition(QTextCursor::End);
+        cursor.insertBlock();
+    }
+
+    void buildImage(QTextCursor& cursor, const Command& command, int depth) {
+        auto block = bodyBlockFormat(125);
+        block.setTopMargin(7);
+        block.setBottomMargin(17);
+        beginBlock(cursor, block, depth);
+        buildInlineImage(cursor, command);
+        cursor.insertBlock();
+    }
+
+    void buildInlineImage(QTextCursor& cursor, const Command& command) {
+        const auto id = static_cast<std::uint32_t>(command.number);
+        const bool allowed = command.flags == 0;
+        QString message;
+        if (allowed) {
+            message = command.text.isEmpty() ? QStringLiteral("Loading image…")
+                                             : QStringLiteral("Loading %1…").arg(command.text);
+        } else if (command.flags == 1) {
+            message = QStringLiteral("Image not found · %1").arg(command.target);
+        } else if (command.flags == 2) {
+            message = QStringLiteral("Image reference blocked · %1").arg(command.target);
+        } else if (command.flags == 3) {
+            message = QStringLiteral("Remote image blocked by Moonmark's privacy policy");
+        } else if (command.flags == 4) {
+            message = QStringLiteral("Unsupported image format · %1").arg(command.target);
+        } else {
+            message = QStringLiteral("Image could not be displayed");
+        }
+
+        const auto resource = QUrl(QStringLiteral("moonmark-image://%1").arg(id));
+        document()->addResource(QTextDocument::ImageResource, resource,
+                                placeholderImage(message, 900, 120, !allowed));
+        QTextImageFormat format;
+        format.setName(resource.toString());
+        format.setWidth(std::min(900, availableImageWidth()));
+        format.setHeight(120);
+        format.setToolTip(command.text);
+        const int position = cursor.position();
+        cursor.insertImage(format);
+        image_occurrences_.push_back(
+            ImageOccurrence{id, position, false, false, !allowed, 900, 120});
+    }
+
+    void buildRawHtml(QTextCursor& cursor, const Command& command, int depth) {
+        auto block = bodyBlockFormat(145);
+        block.setTopMargin(4);
+        block.setBottomMargin(10);
+        beginBlock(cursor, block, depth);
+        auto format = baseCharacterFormat(10.0);
+        format.setFontFamilies({QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas")});
+        format.setForeground(QColor(colour::muted));
+        cursor.insertText(command.text, format);
+        cursor.insertBlock();
+    }
+
+    int availableImageWidth() const {
+        return std::max(240, viewport()->width() - effectiveSideMargin() * 2 - 8);
+    }
+
+    int effectiveSideMargin() const {
+        const int base = settings_.value("documentPadding").toInt(48);
+        return std::max(base, (viewport()->width() - 1680) / 2);
+    }
+
+    void applyDocumentWidth() {
+        if (document() == nullptr || document()->rootFrame() == nullptr) {
+            return;
+        }
+        auto format = document()->rootFrame()->frameFormat();
+        const auto margin = static_cast<qreal>(effectiveSideMargin());
+        format.setLeftMargin(margin);
+        format.setRightMargin(margin);
+        format.setTopMargin(24.0);
+        format.setBottomMargin(28.0);
+        document()->rootFrame()->setFrameFormat(format);
+    }
+
+    void queueVisibleImages() {
+        if (backend_ == nullptr || document() == nullptr) {
+            return;
+        }
+        const int prefetch = 900;
+        for (auto& occurrence : image_occurrences_) {
+            if (occurrence.requested || occurrence.loaded || occurrence.failed) {
+                continue;
+            }
+            QTextCursor cursor(document());
+            cursor.setPosition(std::min(occurrence.position, document()->characterCount() - 1));
+            const auto rectangle = cursorRect(cursor);
+            if (rectangle.bottom() < -prefetch || rectangle.top() > viewport()->height() + prefetch) {
+                continue;
+            }
+            if (image_requested_.contains(occurrence.id)) {
+                occurrence.requested = true;
+                continue;
+            }
+            if (api_->queue_image(backend_, occurrence.id,
+                                  static_cast<std::uint32_t>(std::max(240, availableImageWidth())))) {
+                image_requested_.emplace(occurrence.id, true);
+                for (auto& same : image_occurrences_) {
+                    if (same.id == occurrence.id) {
+                        same.requested = true;
+                    }
+                }
+                image_poll_.start();
+            }
+        }
+    }
+
+    void pollImages() {
+        bool received = false;
+        while (true) {
+            auto result = api_->poll_image(backend_);
+            if (result.id == 0) {
+                break;
+            }
+            received = true;
+            const auto error = fromBuffer(result.error);
+            if (result.error.data != nullptr) {
+                api_->buffer_free(result.error);
+            }
+            const auto resource = QUrl(QStringLiteral("moonmark-image://%1").arg(result.id));
+            if (!error.isEmpty() || result.pixels.data == nullptr || result.width == 0 ||
+                result.height == 0) {
+                document()->addResource(QTextDocument::ImageResource, resource,
+                                        placeholderImage(QStringLiteral("Image failed · %1").arg(error),
+                                                         900, 120, true));
+                for (auto& occurrence : image_occurrences_) {
+                    if (occurrence.id == result.id) {
+                        occurrence.failed = true;
+                    }
+                }
+            } else {
+                const auto width = static_cast<int>(result.width);
+                const auto height = static_cast<int>(result.height);
+                QImage view(result.pixels.data, width, height, width * 4, QImage::Format_RGBA8888);
+                document()->addResource(QTextDocument::ImageResource, resource, view.copy());
+                for (auto& occurrence : image_occurrences_) {
+                    if (occurrence.id == result.id) {
+                        occurrence.loaded = true;
+                        occurrence.natural_width = width;
+                        occurrence.natural_height = height;
+                    }
+                }
+            }
+            if (result.pixels.data != nullptr) {
+                api_->buffer_free(result.pixels);
+            }
+            updateImageFormats(result.id);
+        }
+        if (received) {
+            viewport()->update();
+        }
+        const bool pending = std::any_of(image_occurrences_.cbegin(), image_occurrences_.cend(),
+                                         [](const auto& image) {
+                                             return image.requested && !image.loaded && !image.failed;
+                                         });
+        if (!pending) {
+            image_poll_.stop();
+        }
+    }
+
+    void updateImageFormats(std::uint32_t id) {
+        for (const auto& occurrence : image_occurrences_) {
+            if (occurrence.id != id) {
+                continue;
+            }
+            QTextCursor cursor(document());
+            cursor.setPosition(occurrence.position);
+            cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+            auto format = cursor.charFormat().toImageFormat();
+            const int width = std::min(occurrence.natural_width, availableImageWidth());
+            const double scale = occurrence.natural_width > 0
+                                     ? static_cast<double>(width) / occurrence.natural_width
+                                     : 1.0;
+            format.setWidth(width);
+            format.setHeight(std::max(1, static_cast<int>(occurrence.natural_height * scale)));
+            cursor.setCharFormat(format);
+        }
+    }
+
+    void resizeLoadedImages() {
+        std::unordered_map<std::uint32_t, bool> changed;
+        for (const auto& occurrence : image_occurrences_) {
+            if (occurrence.loaded && !changed.contains(occurrence.id)) {
+                updateImageFormats(occurrence.id);
+                changed.emplace(occurrence.id, true);
+            }
+        }
+    }
+
+    void stopAutoscroll() {
+        autoscroll_active_ = false;
+        autoscroll_.stop();
+        viewport()->unsetCursor();
+    }
+
+    void autoScrollTick() {
+        const double distance = autoscroll_pointer_.y() - autoscroll_anchor_.y();
+        if (std::abs(distance) <= 12.0) {
+            return;
+        }
+        const double speed = std::min(48.0, std::pow((std::abs(distance) - 12.0) / 22.0, 1.35) +
+                                                0.5);
+        auto* bar = verticalScrollBar();
+        bar->setValue(std::clamp(bar->value() + static_cast<int>(std::copysign(speed, distance)),
+                                 bar->minimum(), bar->maximum()));
+    }
+
+    const MoonmarkApiTable* api_ = nullptr;
+    void* backend_ = nullptr;
+    std::vector<Command> commands_;
+    std::vector<ImageOccurrence> image_occurrences_;
+    std::unordered_map<std::uint32_t, bool> image_requested_;
+    std::vector<QString> code_sources_;
+    QJsonObject settings_;
+    QJsonObject metrics_;
+    QString title_ = QStringLiteral("Moonmark");
+    QTimer image_poll_;
+    QTimer autoscroll_;
+    bool autoscroll_active_ = false;
+    QPointF autoscroll_anchor_;
+    QPointF autoscroll_pointer_;
+    int press_position_ = 0;
+    int zoom_percent_ = 100;
+    quint64 construction_us_ = 0;
+    quint64 document_construction_count_ = 0;
+};
+
+class TitleBar final : public QWidget {
+public:
+    explicit TitleBar(QWidget* window) : QWidget(window), window_(window) {
+        setFixedHeight(43);
+        setObjectName(QStringLiteral("titleBar"));
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton && window_->windowHandle() != nullptr) {
+            window_->windowHandle()->startSystemMove();
+            event->accept();
+            return;
+        }
+#ifdef _WIN32
+        if (event->button() == Qt::RightButton) {
+            const auto global = event->globalPosition().toPoint();
+            const auto handle = reinterpret_cast<HWND>(window_->winId());
+            const auto menu = GetSystemMenu(handle, FALSE);
+            const auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, global.x(),
+                                                global.y(), 0, handle, nullptr);
+            if (command != 0) {
+                PostMessageW(handle, WM_SYSCOMMAND, command, 0);
+            }
+            event->accept();
+            return;
+        }
+#endif
+        QWidget::mousePressEvent(event);
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            window_->isMaximized() ? window_->showNormal() : window_->showMaximized();
+            event->accept();
+            return;
+        }
+        QWidget::mouseDoubleClickEvent(event);
+    }
+
+private:
+    QWidget* window_ = nullptr;
+};
+
+class MoonmarkWindow final : public QWidget {
+public:
+    explicit MoonmarkWindow(const MoonmarkApiTable* api) : api_(api) {
+        backend_ = api_->backend_new();
+        window_state_ = api_->window_state_new();
+        setObjectName(QStringLiteral("moonmarkWindow"));
+        setWindowTitle(QStringLiteral("Moonmark"));
+        setWindowIcon(QIcon(applicationAssetPath(QStringLiteral("assets/icons/moonmark.ico"))));
+        setWindowFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowSystemMenuHint |
+                       Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint);
+        setAttribute(Qt::WA_NativeWindow);
+        setMinimumSize(720, 480);
+        resize(1280, 820);
+        setAcceptDrops(true);
+        buildUi();
+        setupWatcher();
+        updateStatus();
+    }
+
+    ~MoonmarkWindow() override {
+        api_->window_state_free(window_state_);
+        api_->backend_free(backend_);
+    }
+
+    bool openDocument(const QString& path) {
+        const QFileInfo file(path);
+        if (!file.exists()) {
+            return false;
+        }
+        const auto utf8 = file.canonicalFilePath().toUtf8();
+        const auto buffer = api_->open_document(backend_,
+                                                reinterpret_cast<const std::uint8_t*>(utf8.constData()),
+                                                static_cast<std::size_t>(utf8.size()));
+        const auto root = jsonFromBuffer(buffer);
+        api_->buffer_free(buffer);
+        document_->load(root);
+        current_path_ = file.canonicalFilePath();
+        title_label_->setText(file.fileName());
+        title_label_->setToolTip(current_path_);
+        stack_->setCurrentWidget(document_);
+        reload_->setEnabled(true);
+        QSettings settings;
+        settings.setValue(QStringLiteral("lastOpenDirectory"), file.absolutePath());
+        watchCurrentFile();
+        updateStatus();
+        return root.value("error").toString().isEmpty();
+    }
+
+    void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("render")) {
+            QTimer::singleShot(180, this, [this] {
+                const auto counters = api_->backend_counters(backend_);
+                const bool selection_copy_ok = document_->testSelectionCopy();
+                const bool ok = !current_path_.isEmpty() && document_->plainText().size() > 40 &&
+                                counters.parse_count == 1 && counters.load_count == 1 &&
+                                document_->constructionCount() == 1 && selection_copy_ok;
+                std::fprintf(stdout,
+                             "MOONMARK_SMOKE render=%s chars=%lld construction_us=%llu parse=%llu load=%llu selection_copy=%s\n",
+                             ok ? "ok" : "failed",
+                             static_cast<long long>(document_->plainText().size()),
+                             static_cast<unsigned long long>(document_->constructionMicros()),
+                             static_cast<unsigned long long>(counters.parse_count),
+                             static_cast<unsigned long long>(counters.load_count),
+                             selection_copy_ok ? "ok" : "failed");
+                std::fflush(stdout);
+                QCoreApplication::exit(ok ? 0 : 4);
+            });
+            return;
+        }
+        if (mode == QStringLiteral("layout")) {
+            QTimer::singleShot(300, this, [this] {
+                const auto before = api_->backend_counters(backend_);
+                const auto constructions = document_->constructionCount();
+                resize(width() + 113, height() + 67);
+                document_->changeZoom(10);
+                document_->changeZoom(-10);
+                showMaximized();
+                QTimer::singleShot(80, this, [this, before, constructions] {
+                    enterFullscreen();
+                    QTimer::singleShot(80, this, [this, before, constructions] {
+                        leaveFullscreen();
+                        QTimer::singleShot(100, this, [this, before, constructions] {
+                            const auto after = api_->backend_counters(backend_);
+                            const bool ok = before.parse_count == after.parse_count &&
+                                            before.load_count == after.load_count &&
+                                            before.image_request_count == after.image_request_count &&
+                                            constructions == document_->constructionCount() &&
+                                            isMaximized();
+                            std::fprintf(stdout,
+                                         "MOONMARK_SMOKE layout=%s parse_delta=%lld load_delta=%lld construction_delta=%lld image_request_delta=%lld restored=%s\n",
+                                         ok ? "ok" : "failed",
+                                         static_cast<long long>(after.parse_count - before.parse_count),
+                                         static_cast<long long>(after.load_count - before.load_count),
+                                         static_cast<long long>(document_->constructionCount() -
+                                                                constructions),
+                                         static_cast<long long>(after.image_request_count -
+                                                                before.image_request_count),
+                                         isMaximized() ? "maximized" : "normal");
+                            std::fflush(stdout);
+                            QCoreApplication::exit(ok ? 0 : 5);
+                        });
+                    });
+                });
+            });
+            return;
+        }
+        if (mode == QStringLiteral("maximize")) {
+            QTimer::singleShot(300, this, [this] {
+                const auto before = api_->backend_counters(backend_);
+                const auto constructions = document_->constructionCount();
+                const auto normal_geometry = geometry();
+                showMaximized();
+                QTimer::singleShot(100, this, [this, before, constructions, normal_geometry] {
+                    const bool maximized = isMaximized();
+                    showNormal();
+                    QTimer::singleShot(100, this,
+                                       [this, before, constructions, normal_geometry, maximized] {
+                        const auto after = api_->backend_counters(backend_);
+                        const bool geometry_restored = geometry() == normal_geometry;
+                        const bool ok = maximized && !isMaximized() && geometry_restored &&
+                                        before.parse_count == after.parse_count &&
+                                        before.load_count == after.load_count &&
+                                        before.image_request_count == after.image_request_count &&
+                                        constructions == document_->constructionCount();
+                        std::fprintf(stdout,
+                                     "MOONMARK_SMOKE maximize=%s parse_delta=%lld load_delta=%lld construction_delta=%lld image_request_delta=%lld geometry=%s\n",
+                                     ok ? "ok" : "failed",
+                                     static_cast<long long>(after.parse_count - before.parse_count),
+                                     static_cast<long long>(after.load_count - before.load_count),
+                                     static_cast<long long>(document_->constructionCount() -
+                                                            constructions),
+                                     static_cast<long long>(after.image_request_count -
+                                                            before.image_request_count),
+                                     geometry_restored ? "restored" : "changed");
+                        std::fflush(stdout);
+                        QCoreApplication::exit(ok ? 0 : 9);
+                    });
+                });
+            });
+            return;
+        }
+        if (mode == QStringLiteral("layout-normal")) {
+            QTimer::singleShot(300, this, [this] {
+                const auto before = api_->backend_counters(backend_);
+                const auto constructions = document_->constructionCount();
+                const auto normal_geometry = geometry();
+                enterFullscreen();
+                QTimer::singleShot(80, this, [this, before, constructions, normal_geometry] {
+                    leaveFullscreen();
+                    QTimer::singleShot(100, this,
+                                       [this, before, constructions, normal_geometry] {
+                        const auto after = api_->backend_counters(backend_);
+                        const bool geometry_restored = geometry() == normal_geometry;
+                        const bool ok = before.parse_count == after.parse_count &&
+                                        before.load_count == after.load_count &&
+                                        before.image_request_count == after.image_request_count &&
+                                        constructions == document_->constructionCount() &&
+                                        !isMaximized() && geometry_restored;
+                        std::fprintf(stdout,
+                                     "MOONMARK_SMOKE layout_normal=%s parse_delta=%lld load_delta=%lld construction_delta=%lld image_request_delta=%lld restored=%s geometry=%s\n",
+                                     ok ? "ok" : "failed",
+                                     static_cast<long long>(after.parse_count - before.parse_count),
+                                     static_cast<long long>(after.load_count - before.load_count),
+                                     static_cast<long long>(document_->constructionCount() -
+                                                            constructions),
+                                     static_cast<long long>(after.image_request_count -
+                                                            before.image_request_count),
+                                     isMaximized() ? "maximized" : "normal",
+                                     geometry_restored ? "restored" : "changed");
+                        std::fflush(stdout);
+                        QCoreApplication::exit(ok ? 0 : 7);
+                    });
+                });
+            });
+            return;
+        }
+        if (mode == QStringLiteral("watcher")) {
+            const auto before = api_->backend_counters(backend_);
+            QTimer::singleShot(100, this, [this, before] {
+                QFile file(current_path_);
+                const bool appended = file.open(QIODevice::Append | QIODevice::Text) &&
+                                      file.write("\nMoonmark watcher smoke update.\n") > 0;
+                file.close();
+                QTimer::singleShot(700, this, [this, before, appended] {
+                    const auto after = api_->backend_counters(backend_);
+                    const bool ok = appended && after.load_count > before.load_count &&
+                                    after.parse_count > before.parse_count;
+                    std::fprintf(stdout,
+                                 "MOONMARK_SMOKE watcher=%s load_delta=%lld parse_delta=%lld\n",
+                                 ok ? "ok" : "failed",
+                                 static_cast<long long>(after.load_count - before.load_count),
+                                 static_cast<long long>(after.parse_count - before.parse_count));
+                    std::fflush(stdout);
+                    QCoreApplication::exit(ok ? 0 : 8);
+                });
+            });
+            return;
+        }
+        if (mode == QStringLiteral("images")) {
+            document_->queueAllImagesForSmoke();
+            auto* deadline = new QTimer(this);
+            deadline->setInterval(25);
+            auto* elapsed = new QElapsedTimer;
+            elapsed->start();
+            QObject::connect(deadline, &QTimer::timeout, this, [this, deadline, elapsed] {
+                const bool finished = document_->pendingImageDecodes() == 0;
+                const bool timed_out = elapsed->elapsed() > 20000;
+                if (!finished && !timed_out) {
+                    return;
+                }
+                const bool ok = finished && document_->failedImageDecodes() == 0 &&
+                                document_->loadedImages() > 0;
+                const auto counters = api_->backend_counters(backend_);
+                std::fprintf(stdout,
+                             "MOONMARK_SMOKE images=%s discovered=%d loaded=%d failed=%d pending=%d requests=%llu cache_bytes=%llu elapsed_ms=%lld\n",
+                             ok ? "ok" : "failed", document_->discoveredImages(),
+                             document_->loadedImages(), document_->failedImageDecodes(),
+                             document_->pendingImageDecodes(),
+                             static_cast<unsigned long long>(counters.image_request_count),
+                             static_cast<unsigned long long>(counters.image_cache_bytes),
+                             static_cast<long long>(elapsed->elapsed()));
+                std::fflush(stdout);
+                deadline->stop();
+                delete elapsed;
+                QCoreApplication::exit(ok ? 0 : 6);
+            });
+            deadline->start();
+        }
+    }
+
+protected:
+    void keyPressEvent(QKeyEvent* event) override {
+        if (event->key() == Qt::Key_F11) {
+            toggleFullscreen();
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_Escape && fullscreen_) {
+            leaveFullscreen();
+            event->accept();
+            return;
+        }
+        if (event->matches(QKeySequence::Open)) {
+            chooseDocument();
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_F5) {
+            reloadDocument();
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_F12) {
+            diagnostics_ = !diagnostics_;
+            updateStatus();
+            event->accept();
+            return;
+        }
+        QWidget::keyPressEvent(event);
+    }
+
+    void dragEnterEvent(QDragEnterEvent* event) override {
+        if (event->mimeData()->hasUrls()) {
+            event->acceptProposedAction();
+        }
+    }
+
+    void dropEvent(QDropEvent* event) override {
+        for (const auto& url : event->mimeData()->urls()) {
+            if (url.isLocalFile() && openDocument(url.toLocalFile())) {
+                event->acceptProposedAction();
+                return;
+            }
+        }
+    }
+
+    void changeEvent(QEvent* event) override {
+        QWidget::changeEvent(event);
+        if (event->type() == QEvent::WindowStateChange && !fullscreen_) {
+            api_->window_set_mode(window_state_, isMaximized() ? 1 : 0);
+            maximize_->setText(isMaximized() ? QStringLiteral("❐") : QStringLiteral("□"));
+        }
+    }
+
+#ifdef _WIN32
+    bool nativeEvent(const QByteArray& event_type, void* message, qintptr* result) override {
+        Q_UNUSED(event_type);
+        auto* native = static_cast<MSG*>(message);
+        if (native->message == WM_NCHITTEST && !fullscreen_) {
+            const auto x = GET_X_LPARAM(native->lParam);
+            const auto y = GET_Y_LPARAM(native->lParam);
+            RECT rectangle{};
+            GetWindowRect(reinterpret_cast<HWND>(winId()), &rectangle);
+            const int border = std::max(5, static_cast<int>(6 * devicePixelRatioF()));
+            const bool left = x < rectangle.left + border;
+            const bool right = x >= rectangle.right - border;
+            const bool top = y < rectangle.top + border;
+            const bool bottom = y >= rectangle.bottom - border;
+            if (top && left) *result = HTTOPLEFT;
+            else if (top && right) *result = HTTOPRIGHT;
+            else if (bottom && left) *result = HTBOTTOMLEFT;
+            else if (bottom && right) *result = HTBOTTOMRIGHT;
+            else if (left) *result = HTLEFT;
+            else if (right) *result = HTRIGHT;
+            else if (top) *result = HTTOP;
+            else if (bottom) *result = HTBOTTOM;
+            else return QWidget::nativeEvent(event_type, message, result);
+            return true;
+        }
+        if (native->message == WM_SYSKEYDOWN && native->wParam == VK_SPACE) {
+            SendMessageW(reinterpret_cast<HWND>(winId()), WM_SYSCOMMAND, SC_KEYMENU, VK_SPACE);
+            return true;
+        }
+        return QWidget::nativeEvent(event_type, message, result);
+    }
+#endif
+
+private:
+    void buildUi() {
+        auto* root = new QVBoxLayout(this);
+        root->setContentsMargins(0, 0, 0, 0);
+        root->setSpacing(0);
+
+        title_bar_ = new TitleBar(this);
+        auto* title_layout = new QHBoxLayout(title_bar_);
+        title_layout->setContentsMargins(10, 6, 0, 6);
+        title_layout->setSpacing(7);
+
+        auto* symbol = new QLabel;
+        QPixmap symbol_pixmap(
+            applicationAssetPath(QStringLiteral("assets/branding/moonmark-symbol.png")));
+        symbol->setPixmap(symbol_pixmap.scaled(24, 24, Qt::KeepAspectRatio,
+                                               Qt::SmoothTransformation));
+        symbol->setFixedSize(27, 27);
+        symbol->setAccessibleName(QStringLiteral("Moonmark"));
+        title_layout->addWidget(symbol);
+
+        open_ = new MoonButton(QStringLiteral("Open"));
+        open_->setAccessibleName(QStringLiteral("Open Markdown file"));
+        QObject::connect(open_, &QPushButton::clicked, this, [this] { chooseDocument(); });
+        title_layout->addWidget(open_);
+
+        reload_ = new MoonButton(QStringLiteral("Reload"));
+        reload_->setEnabled(false);
+        reload_->setAccessibleName(QStringLiteral("Reload current Markdown file"));
+        QObject::connect(reload_, &QPushButton::clicked, this, [this] { reloadDocument(); });
+        title_layout->addWidget(reload_);
+
+        title_layout->addStretch(1);
+        title_label_ = new QLabel(QStringLiteral("Moonmark"));
+        title_label_->setObjectName(QStringLiteral("documentTitle"));
+        title_label_->setAlignment(Qt::AlignCenter);
+        title_label_->setMinimumWidth(160);
+        title_label_->setMaximumWidth(520);
+        title_layout->addWidget(title_label_);
+        title_layout->addStretch(1);
+
+        zoom_out_ = new MoonButton(QStringLiteral("−"));
+        zoom_out_->setObjectName(QStringLiteral("zoomLeft"));
+        zoom_out_->setFixedWidth(30);
+        zoom_out_->setAccessibleName(QStringLiteral("Zoom out"));
+        zoom_label_ = new QLabel(QStringLiteral("100%"));
+        zoom_label_->setObjectName(QStringLiteral("zoomValue"));
+        zoom_label_->setAlignment(Qt::AlignCenter);
+        zoom_label_->setFixedSize(52, 28);
+        zoom_in_ = new MoonButton(QStringLiteral("+"));
+        zoom_in_->setObjectName(QStringLiteral("zoomRight"));
+        zoom_in_->setFixedWidth(30);
+        zoom_in_->setAccessibleName(QStringLiteral("Zoom in"));
+        QObject::connect(zoom_out_, &QPushButton::clicked, this, [this] { changeZoom(-10); });
+        QObject::connect(zoom_in_, &QPushButton::clicked, this, [this] { changeZoom(10); });
+        title_layout->addWidget(zoom_out_);
+        title_layout->addWidget(zoom_label_);
+        title_layout->addWidget(zoom_in_);
+        title_layout->addSpacing(5);
+
+        minimize_ = captionButton(QStringLiteral("—"), QStringLiteral("Minimize"));
+        maximize_ = captionButton(QStringLiteral("□"), QStringLiteral("Maximize or restore"));
+        close_ = captionButton(QStringLiteral("×"), QStringLiteral("Close"));
+        close_->setObjectName(QStringLiteral("closeButton"));
+        QObject::connect(minimize_, &QPushButton::clicked, this, [this] { showMinimized(); });
+        QObject::connect(maximize_, &QPushButton::clicked, this,
+                         [this] { isMaximized() ? showNormal() : showMaximized(); });
+        QObject::connect(close_, &QPushButton::clicked, this, &QWidget::close);
+        title_layout->addWidget(minimize_);
+        title_layout->addWidget(maximize_);
+        title_layout->addWidget(close_);
+        root->addWidget(title_bar_);
+
+        stack_ = new QStackedWidget;
+        stack_->setObjectName(QStringLiteral("documentStack"));
+        auto* empty = new QWidget;
+        auto* empty_layout = new QVBoxLayout(empty);
+        empty_layout->setAlignment(Qt::AlignCenter);
+        auto* empty_symbol = new QLabel;
+        empty_symbol->setPixmap(symbol_pixmap.scaled(86, 86, Qt::KeepAspectRatio,
+                                                     Qt::SmoothTransformation));
+        empty_symbol->setAlignment(Qt::AlignCenter);
+        auto* empty_title = new QLabel(QStringLiteral("Moonmark"));
+        empty_title->setObjectName(QStringLiteral("emptyTitle"));
+        empty_title->setAlignment(Qt::AlignCenter);
+        auto* empty_hint = new QLabel(QStringLiteral("Open or drop a Markdown file to begin"));
+        empty_hint->setObjectName(QStringLiteral("emptyHint"));
+        empty_hint->setAlignment(Qt::AlignCenter);
+        auto* empty_open = new MoonButton(QStringLiteral("Open Markdown file"));
+        empty_open->setAccessibleName(QStringLiteral("Open Markdown file"));
+        QObject::connect(empty_open, &QPushButton::clicked, this, [this] { chooseDocument(); });
+        empty_layout->addWidget(empty_symbol, 0, Qt::AlignCenter);
+        empty_layout->addSpacing(12);
+        empty_layout->addWidget(empty_title);
+        empty_layout->addWidget(empty_hint);
+        empty_layout->addSpacing(15);
+        empty_layout->addWidget(empty_open, 0, Qt::AlignCenter);
+        stack_->addWidget(empty);
+
+        document_ = new DocumentView(api_, backend_);
+        stack_->addWidget(document_);
+        root->addWidget(stack_, 1);
+
+        status_ = new QLabel;
+        status_->setObjectName(QStringLiteral("statusBar"));
+        status_->setFixedHeight(28);
+        status_->setContentsMargins(14, 0, 14, 0);
+        root->addWidget(status_);
+    }
+
+    MoonButton* captionButton(const QString& text, const QString& accessible_name) {
+        auto* button = new MoonButton(text);
+        button->setObjectName(QStringLiteral("captionButton"));
+        button->setFixedSize(46, 43);
+        button->setAccessibleName(accessible_name);
+        return button;
+    }
+
+    void setupWatcher() {
+        watcher_ = new QFileSystemWatcher(this);
+        reload_delay_.setSingleShot(true);
+        reload_delay_.setInterval(180);
+        QObject::connect(watcher_, &QFileSystemWatcher::fileChanged, this, [this] {
+            reload_delay_.start();
+        });
+        QObject::connect(&reload_delay_, &QTimer::timeout, this, [this] {
+            if (!current_path_.isEmpty() && QFileInfo::exists(current_path_)) {
+                openDocument(current_path_);
+            }
+        });
+    }
+
+    void watchCurrentFile() {
+        const auto paths = watcher_->files();
+        if (!paths.isEmpty()) {
+            watcher_->removePaths(paths);
+        }
+        if (!current_path_.isEmpty()) {
+            watcher_->addPath(current_path_);
+        }
+    }
+
+    void chooseDocument() {
+        QSettings settings;
+        auto initial = settings.value(QStringLiteral("lastOpenDirectory")).toString();
+        if (initial.isEmpty() || !QFileInfo(initial).isDir()) {
+            initial = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        }
+        const auto path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("Open Markdown file"), initial,
+            QStringLiteral("Markdown files (*.md *.markdown *.mdown *.mkd);;All files (*)"));
+        if (!path.isEmpty()) {
+            openDocument(path);
+        }
+    }
+
+    void reloadDocument() {
+        if (!current_path_.isEmpty()) {
+            openDocument(current_path_);
+        }
+    }
+
+    void changeZoom(int delta) {
+        document_->changeZoom(delta);
+        zoom_label_->setText(QStringLiteral("%1%").arg(document_->zoomPercent()));
+        updateStatus();
+    }
+
+    void toggleFullscreen() {
+        fullscreen_ ? leaveFullscreen() : enterFullscreen();
+    }
+
+    void enterFullscreen() {
+        pre_fullscreen_maximized_ = isMaximized();
+        api_->window_set_mode(window_state_, pre_fullscreen_maximized_ ? 1 : 0);
+        api_->window_enter_fullscreen(window_state_);
+        fullscreen_ = true;
+        title_bar_->hide();
+        status_->hide();
+        showFullScreen();
+    }
+
+    void leaveFullscreen() {
+        const auto restored = api_->window_leave_fullscreen(window_state_);
+        fullscreen_ = false;
+        title_bar_->show();
+        status_->show();
+        if (restored == 1 || pre_fullscreen_maximized_) {
+            showMaximized();
+        } else {
+            showNormal();
+        }
+    }
+
+    void updateStatus() {
+        const auto counters = api_->backend_counters(backend_);
+        if (diagnostics_) {
+            status_->setText(
+                QStringLiteral("%1/%2 images · revision/load %3 · parsed %4× · document %5 µs · cache %6 MiB")
+                    .arg(document_->loadedImages())
+                    .arg(document_->discoveredImages())
+                    .arg(counters.load_count)
+                    .arg(counters.parse_count)
+                    .arg(document_->constructionMicros())
+                    .arg(static_cast<double>(counters.image_cache_bytes) / (1024.0 * 1024.0), 0,
+                         'f', 1));
+        } else if (current_path_.isEmpty()) {
+            status_->setText(QStringLiteral("Ready"));
+        } else {
+            status_->setText(QStringLiteral("%1 images · %2% zoom")
+                                 .arg(document_->discoveredImages())
+                                 .arg(document_->zoomPercent()));
+        }
+    }
+
+    const MoonmarkApiTable* api_ = nullptr;
+    void* backend_ = nullptr;
+    void* window_state_ = nullptr;
+    TitleBar* title_bar_ = nullptr;
+    QStackedWidget* stack_ = nullptr;
+    DocumentView* document_ = nullptr;
+    MoonButton* open_ = nullptr;
+    MoonButton* reload_ = nullptr;
+    MoonButton* zoom_out_ = nullptr;
+    MoonButton* zoom_in_ = nullptr;
+    MoonButton* minimize_ = nullptr;
+    MoonButton* maximize_ = nullptr;
+    MoonButton* close_ = nullptr;
+    QLabel* zoom_label_ = nullptr;
+    QLabel* title_label_ = nullptr;
+    QLabel* status_ = nullptr;
+    QFileSystemWatcher* watcher_ = nullptr;
+    QTimer reload_delay_;
+    QString current_path_;
+    bool fullscreen_ = false;
+    bool pre_fullscreen_maximized_ = false;
+    bool diagnostics_ = false;
+};
+
+void applyMoonmarkStyle(QApplication& application) {
+    QPalette palette;
+    palette.setColor(QPalette::Window, QColor(colour::background));
+    palette.setColor(QPalette::WindowText, QColor(colour::text));
+    palette.setColor(QPalette::Base, QColor(colour::document));
+    palette.setColor(QPalette::AlternateBase, QColor(colour::surface));
+    palette.setColor(QPalette::Text, QColor(colour::text));
+    palette.setColor(QPalette::Button, QColor(colour::surface));
+    palette.setColor(QPalette::ButtonText, QColor(colour::text));
+    palette.setColor(QPalette::Highlight, QColor(colour::selection));
+    palette.setColor(QPalette::HighlightedText, QColor(colour::bright));
+    palette.setColor(QPalette::Link, QColor(colour::silver));
+    palette.setColor(QPalette::LinkVisited, QColor(colour::secondary));
+    palette.setColor(QPalette::Disabled, QPalette::Text, QColor(colour::muted));
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(colour::muted));
+    application.setPalette(palette);
+    application.setStyleSheet(QStringLiteral(R"(
+        QWidget { background: #080808; color: #e8e8e8; font-family: "Segoe UI Variable Text", "Segoe UI"; }
+        #titleBar { background: #0c0c0c; border-bottom: 1px solid #303030; }
+        QPushButton { background: #141414; border: 1px solid #303030; border-radius: 5px; padding: 4px 11px; }
+        QPushButton:hover { background: #242424; border-color: #464646; }
+        QPushButton:pressed { background: #303030; }
+        QPushButton:focus { border: 1px solid #c8c8c8; }
+        QPushButton:disabled { color: #525252; background: #101010; border-color: #242424; }
+        #captionButton { border: 0; border-radius: 0; background: transparent; font-size: 15px; padding: 0; }
+        #captionButton:hover { background: #242424; }
+        #captionButton:pressed { background: #303030; }
+        #closeButton:hover { background: #612f2f; color: #ffffff; }
+        #documentTitle { color: #c8c8c8; font-weight: 600; }
+        #zoomLeft { border-top-right-radius: 0; border-bottom-right-radius: 0; padding: 0; }
+        #zoomRight { border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 0; }
+        #zoomValue { background: #141414; border-top: 1px solid #303030; border-bottom: 1px solid #303030; color: #b0b0b0; }
+        #documentStack { background: #0e0e0e; }
+        #emptyTitle { font-size: 25px; font-weight: 600; color: #f0f0f0; }
+        #emptyHint { color: #7c7c7c; margin-top: 4px; }
+        #statusBar { background: #0c0c0c; border-top: 1px solid #303030; color: #7c7c7c; font-size: 11px; }
+        QTextEdit { background: #0e0e0e; border: 0; selection-background-color: #484848; selection-color: #f0f0f0; }
+        QScrollBar:vertical { background: #0e0e0e; width: 13px; margin: 0; }
+        QScrollBar::handle:vertical { background: #464646; min-height: 30px; border-radius: 5px; margin: 2px; }
+        QScrollBar::handle:vertical:hover { background: #5c5c5c; }
+        QScrollBar:horizontal { background: #0e0e0e; height: 13px; margin: 0; }
+        QScrollBar::handle:horizontal { background: #464646; min-width: 30px; border-radius: 5px; margin: 2px; }
+        QScrollBar::handle:horizontal:hover { background: #5c5c5c; }
+        QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+        QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+        QToolTip { background: #1c1c1c; color: #e8e8e8; border: 1px solid #464646; padding: 4px; }
+    )"));
+}
+
+} // namespace
+
+extern "C" int moonmark_qt_run(int argc, const char* const* argv, const MoonmarkApiTable* api) {
+    if (api == nullptr || api->version != 2) {
+        return 2;
+    }
+    QCoreApplication::setOrganizationName(QStringLiteral("Moonmark"));
+    QCoreApplication::setApplicationName(QStringLiteral("Moonmark"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(MOONMARK_PRODUCT_VERSION));
+
+    std::vector<QByteArray> argument_storage;
+    std::vector<char*> qt_arguments;
+    argument_storage.reserve(static_cast<std::size_t>(argc));
+    qt_arguments.reserve(static_cast<std::size_t>(argc));
+    for (int index = 0; index < argc; ++index) {
+        argument_storage.emplace_back(argv[index]);
+    }
+    for (auto& argument : argument_storage) {
+        qt_arguments.push_back(argument.data());
+    }
+    int qt_argc = argc;
+    QApplication application(qt_argc, qt_arguments.data());
+    applyMoonmarkStyle(application);
+    MoonmarkWindow window(api);
+    window.show();
+    QString smoke_mode;
+    QString document_path;
+    for (int index = 1; index < qt_argc; ++index) {
+        const auto argument = QString::fromLocal8Bit(qt_arguments[static_cast<std::size_t>(index)]);
+        if (argument == QStringLiteral("--smoke-render")) {
+            smoke_mode = QStringLiteral("render");
+        } else if (argument == QStringLiteral("--smoke-layout")) {
+            smoke_mode = QStringLiteral("layout");
+        } else if (argument == QStringLiteral("--smoke-maximize")) {
+            smoke_mode = QStringLiteral("maximize");
+        } else if (argument == QStringLiteral("--smoke-layout-normal")) {
+            smoke_mode = QStringLiteral("layout-normal");
+        } else if (argument == QStringLiteral("--smoke-watcher")) {
+            smoke_mode = QStringLiteral("watcher");
+        } else if (argument == QStringLiteral("--smoke-images")) {
+            smoke_mode = QStringLiteral("images");
+        } else if (!argument.startsWith(QLatin1Char('-')) && QFileInfo::exists(argument)) {
+            document_path = argument;
+        }
+    }
+    if (!document_path.isEmpty()) {
+        window.openDocument(document_path);
+    }
+    if (!smoke_mode.isEmpty()) {
+        if (document_path.isEmpty()) {
+            return 3;
+        }
+        window.runSmoke(smoke_mode);
+    }
+    return application.exec();
+}

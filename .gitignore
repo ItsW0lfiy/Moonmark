@@ -1,0 +1,15 @@
+/build/
+/build-*/
+/target/
+/.deps/
+/deploy/
+/fixtures/generated/
+/.vs/
+/.vscode/
+CMakeUserPresets.json
+*.log
+*.pdb
+*.ilk
+*.user
+.DS_Store
+Thumbs.db

@@ -1,0 +1,7 @@
+# UI style
+
+New Moon is a black lunar, achromatic application theme. All controlled chrome and Markdown presentation colors use equal red, green, and blue channels. Neutral selection, focus, links, scrollbars, tables, blockquotes, and button states override platform accent colors without removing keyboard focus visibility. Syntax tokens are the deliberate exception: restrained amber, sage, orange, warm cream, and muted red help code scan clearly, while blue, cyan, teal, navy, and blue-gray remain prohibited.
+
+The document is the dominant surface. It uses the available desktop width with modest padding rather than a centered article card. H1 through H6 have distinct scales and spacing. Links use neutral silver plus underlining. Fenced code uses one continuous graphite QTextFrame with compact monospace lines, internal padding, a restrained language label, and a thin header separator. QTextFrame has no radius property, so the current code container remains square until a contained native paint solution can preserve selection and layout. Moonmark-owned action buttons and scrollbar handles use restrained radii; tables use charcoal surfaces and neutral borders.
+
+The toolbar, document canvas, code surface, and footer use close but distinct graphite levels. The zoom controls form one compact native group, the filename has deliberate neutral emphasis, and detailed timing remains debug-build-only. The close hover remains a restrained dark red destructive affordance.

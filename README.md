@@ -2,60 +2,53 @@
 
 ![Moonmark approved logo](assets/branding/moonmark-logo.png)
 
-Moonmark is a Windows-first, viewer-first Markdown application with a Rust core and a framework-neutral document and presentation model. Linux is intended, and Android is an eventual target. Moonmark remains file-oriented rather than vault-oriented and contains no browser engine, HTML/DOM application renderer, or local web server.
+Moonmark is a Windows-first, viewer-first Markdown application. It is one native process built with Rust, C++20, Qt 6 Widgets, and QTextDocument. Linux is the secondary desktop target; Android remains later work. Moonmark contains no browser engine, web frontend, local server, CLR, JVM, or Node.js runtime.
 
-## Current transition status
-
-The C#/Avalonia/.NET frontend experiment has been discontinued because its runtime and distribution model conflicts with Moonmark's approved runtime policy. It successfully validated substantial renderer, image, window-state, and presentation behavior; it is not considered a technical failure.
-
-The next frontend/rendering implementation has not been selected. The repository therefore temporarily retains the old Avalonia frontend and its Rust `hostfxr` bridge as non-shipping reference material. Do not extend that code. It will be removed after an explicitly approved replacement preserves the necessary behavior.
-
-Rust is the primary language for the shipped application. Python and PowerShell 7 are also approved where appropriate. Any other runtime or implementation language requires specific, explicit user approval; bundling an otherwise unapproved runtime is not an approval loophole.
-
-## Cargo workflow
-
-The intended top-level project interface remains:
-
-```powershell
-cargo run
-cargo run -- fixtures\moonmark-visual-test.md
-cargo check
-cargo test
-cargo build
-cargo build --release
-```
-
-The current transitional checkout still invokes the discontinued .NET/Avalonia build from `build.rs`, so these commands presently require the pinned .NET SDK and are not yet representative of the final shipping architecture. This limitation must be removed as part of an eventual user-approved frontend migration, not hidden or worked around by selecting a framework without user approval.
+Current development baseline: `0.1.0-dev.1`.
 
 ## Architecture
 
 ```text
 Markdown source
-  -> Rust Comrak semantic model
-  -> Rust framework-neutral presentation model
-  -> replaceable presentation adapter
-  -> frontend/rendering implementation (not yet selected)
+  -> Rust / Comrak semantic model
+  -> Rust framework-neutral presentation commands
+  -> versioned C ABI
+  -> C++ / Qt Widgets adapter
+  -> native QTextDocument
 ```
 
-The frontend must not become the semantic document model. Preserve the existing Rust parsing, semantic/presentation models, image policy and cache, syntax highlighting, diagnostics, fixtures, benchmarks, file behavior, and framework-neutral window-state semantics where useful.
+Rust owns file loading, Comrak parsing, semantic/presentation models, syntax classification, image policy/decoding/cache, diagnostics, and framework-neutral window state. C++ owns the Qt widget shell, native QTextDocument construction, selection/clipboard interaction, document layout, and Windows presentation integration. The boundary transfers UTF-8 JSON, IDs, owned byte buffers, counters, and function pointers; it does not use a second process or network IPC.
 
-The New Moon interface is broad, desktop-first, and achromatic. Syntax highlighting is the only color exception and uses restrained warm/sage tokens with no blue, cyan, or teal.
+The New Moon interface is broad, desktop-first, and achromatic. Syntax highlighting is the only color exception and deliberately avoids blue, cyan, teal, navy, and blue-gray.
 
-Relative local images resolve from the Markdown file's directory. Explicit parent-directory, absolute, and `file:///` image references also load automatically after canonicalization; remote images remain disabled. Repeated references to one image share decode/cache work.
+Moonmark is file-oriented rather than vault-oriented: it reads an ordinary Markdown file and releases the read handle. Relative images resolve from that document; valid parent, absolute, and `file:///` paths are allowed after canonicalization. Remote images remain disabled.
 
-Moonmark's normal distribution is intended to be an installer, with an additional portable release using essentially the same application architecture. Package size should reflect useful Moonmark functionality rather than disproportionate language-runtime baggage.
+## Build and run
 
-## Fixtures and measurements
-
-The Rust fixture generator and headless renderer benchmark remain useful during the transition:
+On Windows, install Rust 1.94+ with the MSVC target and a C++20 MSVC toolchain. Then either set `MOONMARK_QT_DIR`/`QTDIR` to a Qt 6 Widgets SDK or bootstrap the tested project-local Qt 6.11.2 SDK:
 
 ```powershell
-cargo run --bin generate_stress_fixture -- fixtures\generated
-cargo run --bin renderer_benchmark -- fixtures\generated\image-stress-250.md
+pwsh -File scripts/bootstrap_qt.ps1
+cargo run
+cargo run -- fixtures\moonmark-visual-test.md
+cargo check
+cargo test
+cargo build --release
 ```
 
-The existing GUI smoke commands exercise the discontinued reference frontend and should be treated as behavioral evidence, not as approval to keep that architecture.
+Cargo compiles the C++ adapter and stages the required dynamic Qt libraries. It does not invoke CMake, `dotnet`, NuGet, Node.js, or a browser toolchain.
 
-See [architecture](docs/ARCHITECTURE.md), [renderer](docs/NATIVE_RENDERER.md), [image pipeline](docs/IMAGE_PIPELINE.md), [window behavior](docs/WINDOW_FRAME.md), [style](docs/UI_STYLE.md), [branding](docs/BRANDING.md), and [building](docs/BUILDING.md).
+Generate repeatable stress inputs and run the headless Rust benchmark with:
 
-Major architecture changes require explicit user approval.
+```powershell
+cargo run --bin generate_stress_fixture
+cargo run --release --bin renderer_benchmark -- fixtures\generated\image-stress.md
+```
+
+Assemble the measured Windows portable folder and ZIP with:
+
+```powershell
+pwsh -File scripts/package_windows.ps1
+```
+
+See [architecture](docs/ARCHITECTURE.md), [renderer](docs/NATIVE_RENDERER.md), [images](docs/IMAGE_PIPELINE.md), [window behavior](docs/WINDOW_FRAME.md), [building](docs/BUILDING.md), [packaging](docs/PACKAGING.md), and [Qt licensing](docs/QT_LICENSING.md).

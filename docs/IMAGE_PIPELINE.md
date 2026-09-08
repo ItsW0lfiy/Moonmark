@@ -1,0 +1,12 @@
+# Image pipeline
+
+Rust resolves local references relative to the opened Markdown document and canonicalizes the resulting path. Existing files referenced through normal relative paths, child paths, `../`, absolute paths, Windows separators, percent encoding, Unicode, and `file:///` URIs are allowed. Moonmark does not restore the rejected folder-approval model. Missing and unsupported files remain visible as native placeholders. HTTP/HTTPS images and unsupported URI schemes never issue a network request.
+
+The presentation model assigns document-local image IDs. The Qt adapter requests visible and nearby images at a bounded display width. Repeated occurrences sharing a canonical asset also share one Rust decode request/result while retaining separate QTextDocument positions.
+
+Rust uses a fixed Rayon pool of four workers, generation-based cancellation, and a 128 MiB LRU cache. Metadata/dimensions are bounded before allocation. PNG, JPEG, WebP, and the first GIF frame use the Rust `image` crate. Static SVG uses `resvg`; external SVG href loading is disabled. AVIF and animated GIF playback are not enabled.
+
+The Qt UI thread converts returned RGBA buffers into copied QImages and releases the Rust buffer immediately. Loaded document resources remain keyed by image ID. Resize and zoom update QTextImageFormat geometry without rereading or redecoding. Replacing the document advances the Rust generation and clears presentation occurrences.
+
+The deterministic stress fixture contains 250 valid occurrences sharing six underlying assets plus five intentionally missing references. Missing placeholders are unavailable source references, not decoder failures.
+
