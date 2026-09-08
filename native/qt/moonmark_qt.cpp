@@ -1122,8 +1122,12 @@ public:
         current_path_ = file.canonicalFilePath();
         title_label_->setText(file.fileName());
         title_label_->setToolTip(current_path_);
+        setWindowTitle(QStringLiteral("%1 — Moonmark").arg(file.fileName()));
         stack_->setCurrentWidget(document_);
         reload_->setEnabled(true);
+        if (!fullscreen_) {
+            command_bar_->show();
+        }
         QSettings settings;
         settings.setValue(QStringLiteral("lastOpenDirectory"), file.absolutePath());
         watchCurrentFile();
@@ -1514,6 +1518,7 @@ private:
         zoom_layout->addWidget(zoom_in_);
         command_layout->addWidget(zoom_control);
         root->addWidget(command_bar_);
+        command_bar_->hide();
 
         stack_ = new QStackedWidget;
         stack_->setObjectName(QStringLiteral("documentStack"));
@@ -1630,7 +1635,7 @@ private:
         const auto restored = api_->window_leave_fullscreen(window_state_);
         fullscreen_ = false;
         title_bar_->show();
-        command_bar_->show();
+        command_bar_->setVisible(!current_path_.isEmpty());
         diagnostics_bar_->setVisible(diagnostics_);
         if (restored == 1 || pre_fullscreen_maximized_) {
             showMaximized();
