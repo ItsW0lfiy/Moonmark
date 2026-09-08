@@ -1,6 +1,6 @@
 # Chapter index
 
-A document table should read like aligned text, not a spreadsheet. Paths stay **monospace** without becoming boxes inside cells.
+A document table should be easy to scan, with quiet column separators. Paths stay **monospace** on subtle graphite backgrounds.
 
 | Chapter | Illustration | Pages |
 | :-- | :-- | --: |

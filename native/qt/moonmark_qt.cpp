@@ -426,18 +426,21 @@ public:
             auto* table = qobject_cast<QTextTable*>(frame);
             if (table == nullptr) continue;
             ++tables;
-            if (table->format().border() != 0) return false;
+            if (table->format().border() != 1) return false;
             for (int row = 0; row < table->rows(); ++row) {
                 for (int column = 0; column < table->columns(); ++column) {
                     const auto cell = table->cellAt(row, column);
                     const auto format = cell.format().toTableCellFormat();
-                    if (format.leftBorder() != 0 || format.rightBorder() != 0 ||
+                    if (format.leftBorder() != (column == 0 ? 0 : 1) || format.rightBorder() != 0 ||
                         format.topBorder() != 0) return false;
+                    if (row == 0 && format.background().color() != QColor(colour::table_header))
+                        return false;
                     right_aligned |= cell.firstCursorPosition().blockFormat().alignment() ==
                                      Qt::AlignRight;
                     const auto block = cell.firstCursorPosition().block();
                     for (auto it = block.begin(); !it.atEnd(); ++it) {
-                        if (it.fragment().charFormat().background().style() != Qt::NoBrush)
+                        const auto background = it.fragment().charFormat().background();
+                        if (background.style() != Qt::NoBrush && background.color() != QColor(colour::inline_code))
                             return false;
                     }
                 }
@@ -717,7 +720,8 @@ private:
         auto block = bodyBlockFormat(settings_.value("lineHeightPercent").toInt(150));
         double points = settings_.value("bodyFontPoints").toDouble(12.75);
         if (heading) {
-            static constexpr double scales[] = {1.85, 1.55, 1.34, 1.18, 1.08, 1.0};
+            static constexpr double scales[] = {2.05, 1.60, 1.34, 1.18, 1.08, 1.0};
+            block.setHeadingLevel(std::clamp(level, 1, 6));
             points *= scales[std::clamp(level, 1, 6) - 1];
             block.setTopMargin(level == 1 ? 21.0 : (level == 2 ? 17.0 : 13.0));
             block.setBottomMargin(level <= 2 ? 9.0 : 6.0);
@@ -740,8 +744,7 @@ private:
         cursor.insertBlock();
     }
 
-    void insertInline(QTextCursor& cursor, const Command& command, double points, bool heading,
-                      bool table_context = false) {
+    void insertInline(QTextCursor& cursor, const Command& command, double points, bool heading) {
         if (command.kind == command_kind::soft_break) {
             cursor.insertText(QStringLiteral(" "), baseCharacterFormat(points));
             return;
@@ -778,7 +781,7 @@ private:
         if ((command.flags & text_style::code) != 0) {
             format.setFontFamilies({QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas")});
             format.setFontPointSize(points * 0.9);
-            if (!table_context) format.setBackground(QColor(colour::surface));
+            format.setBackground(QColor(colour::inline_code));
             format.setForeground(QColor(colour::bright));
         }
         if ((command.flags & text_style::link) != 0) {
@@ -868,8 +871,10 @@ private:
         spacer.setBottomMargin(0);
         cursor.setBlockFormat(spacer);
         QTextFrameFormat frame_format;
-        frame_format.setBackground(QColor(colour::surface));
-        frame_format.setBorder(0);
+        frame_format.setBackground(QColor(colour::code));
+        frame_format.setBorder(1);
+        frame_format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+        frame_format.setBorderBrush(QColor(colour::border));
         frame_format.setPadding(14.0);
         frame_format.setTopMargin(6.0);
         frame_format.setBottomMargin(13.0);
@@ -957,7 +962,9 @@ private:
         spacer.setBottomMargin(0);
         cursor.setBlockFormat(spacer);
         QTextTableFormat table_format;
-        table_format.setBorder(0);
+        table_format.setBorder(1);
+        table_format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+        table_format.setBorderBrush(QColor(colour::border));
         table_format.setBorderCollapse(true);
         table_format.setHeaderRowCount(1);
         table_format.setWidth(QTextLength(QTextLength::PercentageLength, 100));
@@ -989,10 +996,16 @@ private:
                 auto cell = table->cellAt(row, std::min(column, columns - 1));
                 auto cell_format = cell.format().toTableCellFormat();
                 const bool header = (row_command.flags & text_style::header) != 0;
-                cell_format.setTopPadding(6);
-                cell_format.setBottomPadding(6);
-                cell_format.setLeftPadding(column == 0 ? 0 : 12);
-                cell_format.setRightPadding(column == columns - 1 ? 0 : 12);
+                cell_format.setTopPadding(8);
+                cell_format.setBottomPadding(8);
+                cell_format.setLeftPadding(14);
+                cell_format.setRightPadding(14);
+                if (header) cell_format.setBackground(QColor(colour::table_header));
+                if (column > 0) {
+                    cell_format.setLeftBorder(1);
+                    cell_format.setLeftBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+                    cell_format.setLeftBorderBrush(QColor(colour::table_column));
+                }
                 if (row < rows - 1) {
                     cell_format.setBottomBorder(1);
                     cell_format.setBottomBorderStyle(QTextFrameFormat::BorderStyle_Solid);
@@ -1008,8 +1021,8 @@ private:
                                        cell_command.number == 1 ? Qt::AlignHCenter : Qt::AlignLeft);
                 cell_cursor.setBlockFormat(cell_block);
                 while (index < commands_.size() && commands_[index].kind != command_kind::end_cell) {
-                    insertInline(cell_cursor, commands_[index], 11.25,
-                                 (row_command.flags & text_style::header) != 0, true);
+                    insertInline(cell_cursor, commands_[index], 11.75,
+                                 (row_command.flags & text_style::header) != 0);
                     ++index;
                 }
                 if (index < commands_.size()) {
