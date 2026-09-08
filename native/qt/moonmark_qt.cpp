@@ -731,6 +731,13 @@ private:
         if (cursor.position() != 0 && !cursor.block().text().isEmpty()) {
             cursor.insertBlock();
         }
+        // QTextDocument requires an outer paragraph around frames. Keep the empty
+        // structural paragraph tiny rather than giving it a full body-text line.
+        auto spacer = bodyBlockFormat();
+        spacer.setLineHeight(1, QTextBlockFormat::FixedHeight);
+        spacer.setTopMargin(0);
+        spacer.setBottomMargin(0);
+        cursor.setBlockFormat(spacer);
         QTextFrameFormat frame_format;
         frame_format.setBackground(QColor(colour::surface));
         frame_format.setBorder(0);
@@ -794,7 +801,8 @@ private:
         }
         cursor = QTextCursor(frame->lastCursorPosition());
         cursor.movePosition(QTextCursor::End);
-        cursor.insertBlock();
+        cursor.setBlockFormat(bodyBlockFormat());
+        cursor.setCharFormat(baseCharacterFormat());
     }
 
     void buildRule(QTextCursor& cursor, int depth) {
@@ -814,6 +822,11 @@ private:
         if (cursor.position() != 0 && !cursor.block().text().isEmpty()) {
             cursor.insertBlock();
         }
+        auto spacer = bodyBlockFormat();
+        spacer.setLineHeight(1, QTextBlockFormat::FixedHeight);
+        spacer.setTopMargin(0);
+        spacer.setBottomMargin(0);
+        cursor.setBlockFormat(spacer);
         QTextTableFormat table_format;
         table_format.setBorder(0);
         table_format.setBorderCollapse(true);
@@ -885,7 +898,8 @@ private:
         }
         cursor = QTextCursor(table->lastCursorPosition());
         cursor.movePosition(QTextCursor::End);
-        cursor.insertBlock();
+        cursor.setBlockFormat(bodyBlockFormat());
+        cursor.setCharFormat(baseCharacterFormat());
     }
 
     void buildImage(QTextCursor& cursor, const Command& command, int depth) {
