@@ -8,6 +8,7 @@
 #include <QCloseEvent>
 #include <QColor>
 #include <QDesktopServices>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
@@ -1125,6 +1126,18 @@ public:
     }
 
     void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("snapshot")) {
+            QTimer::singleShot(350, this, [this] {
+                const auto output =
+                    QDir::current().absoluteFilePath(QStringLiteral("target/moonmark-ui.png"));
+                const bool saved = grab().save(output, "PNG");
+                std::fprintf(stdout, "MOONMARK_SMOKE snapshot=%s path=%s\n",
+                             saved ? "ok" : "failed", output.toUtf8().constData());
+                std::fflush(stdout);
+                QCoreApplication::exit(saved ? 0 : 10);
+            });
+            return;
+        }
         if (mode == QStringLiteral("render")) {
             QTimer::singleShot(180, this, [this] {
                 const auto counters = api_->backend_counters(backend_);
@@ -1705,6 +1718,8 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
         const auto argument = QString::fromLocal8Bit(qt_arguments[static_cast<std::size_t>(index)]);
         if (argument == QStringLiteral("--smoke-render")) {
             smoke_mode = QStringLiteral("render");
+        } else if (argument == QStringLiteral("--smoke-snapshot")) {
+            smoke_mode = QStringLiteral("snapshot");
         } else if (argument == QStringLiteral("--smoke-layout")) {
             smoke_mode = QStringLiteral("layout");
         } else if (argument == QStringLiteral("--smoke-maximize")) {
@@ -1723,7 +1738,7 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
         window.openDocument(document_path);
     }
     if (!smoke_mode.isEmpty()) {
-        if (document_path.isEmpty()) {
+        if (document_path.isEmpty() && smoke_mode != QStringLiteral("snapshot")) {
             return 3;
         }
         window.runSmoke(smoke_mode);
