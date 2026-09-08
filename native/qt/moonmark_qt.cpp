@@ -203,8 +203,8 @@ QTextCharFormat baseCharacterFormat(double points = 12.75) {
 
 QTextBlockFormat bodyBlockFormat(int line_height = 168) {
     QTextBlockFormat format;
-    format.setTopMargin(2.0);
-    format.setBottomMargin(10.0);
+    format.setTopMargin(1.0);
+    format.setBottomMargin(8.0);
     format.setLineHeight(line_height, QTextBlockFormat::ProportionalHeight);
     return format;
 }
@@ -523,11 +523,11 @@ private:
         auto block = bodyBlockFormat(settings_.value("lineHeightPercent").toInt(168));
         double points = settings_.value("bodyFontPoints").toDouble(12.75);
         if (heading) {
-            static constexpr double scales[] = {2.15, 1.72, 1.42, 1.22, 1.08, 1.0};
+            static constexpr double scales[] = {1.85, 1.55, 1.34, 1.18, 1.08, 1.0};
             points *= scales[std::clamp(level, 1, 6) - 1];
-            block.setTopMargin(level <= 2 ? 20.0 : 14.0);
-            block.setBottomMargin(level <= 2 ? 11.0 : 8.0);
-            block.setLineHeight(128, QTextBlockFormat::ProportionalHeight);
+            block.setTopMargin(level == 1 ? 21.0 : (level == 2 ? 17.0 : 13.0));
+            block.setBottomMargin(level <= 2 ? 9.0 : 6.0);
+            block.setLineHeight(132, QTextBlockFormat::ProportionalHeight);
         }
         beginBlock(cursor, block, depth);
         if (!anchor.isEmpty()) {
@@ -617,9 +617,9 @@ private:
                 if (commands_[index].kind == command_kind::begin_paragraph) {
                     ++index;
                     auto block = bodyBlockFormat(settings_.value("lineHeightPercent").toInt(168));
-                    block.setLeftMargin((depth + 1) * 25.0);
-                    block.setTextIndent(-20.0);
-                    block.setBottomMargin(5.0);
+                    block.setLeftMargin((depth + 1) * 24.0);
+                    block.setTextIndent(-19.0);
+                    block.setBottomMargin(4.0);
                     beginBlock(cursor, block, 0);
                     auto marker_format = baseCharacterFormat();
                     marker_format.setForeground(QColor(colour::secondary));
@@ -646,7 +646,7 @@ private:
             }
             if (!marker_inserted) {
                 auto block = bodyBlockFormat();
-                block.setLeftMargin((depth + 1) * 25.0);
+                block.setLeftMargin((depth + 1) * 24.0);
                 beginBlock(cursor, block, 0);
                 cursor.insertText(marker, baseCharacterFormat());
                 cursor.insertBlock();
@@ -667,8 +667,8 @@ private:
         frame_format.setBorderBrush(QColor(colour::border));
         frame_format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
         frame_format.setPadding(14.0);
-        frame_format.setTopMargin(7.0);
-        frame_format.setBottomMargin(16.0);
+        frame_format.setTopMargin(6.0);
+        frame_format.setBottomMargin(13.0);
         frame_format.setLeftMargin(depth * 22.0);
         auto* frame = cursor.insertFrame(frame_format);
         QTextCursor inside(frame);
@@ -732,8 +732,8 @@ private:
     void buildRule(QTextCursor& cursor, int depth) {
         auto block = bodyBlockFormat(100);
         block.setLineHeight(1, QTextBlockFormat::FixedHeight);
-        block.setTopMargin(16);
-        block.setBottomMargin(19);
+        block.setTopMargin(11);
+        block.setBottomMargin(13);
         block.setLeftMargin(depth * 22.0);
         block.setBackground(QColor(colour::border));
         beginBlock(cursor, block, 0);
@@ -751,8 +751,8 @@ private:
         table_format.setBorderBrush(QColor(colour::border));
         table_format.setCellPadding(8.0);
         table_format.setCellSpacing(0.0);
-        table_format.setTopMargin(7.0);
-        table_format.setBottomMargin(16.0);
+        table_format.setTopMargin(6.0);
+        table_format.setBottomMargin(13.0);
         table_format.setLeftMargin(depth * 22.0);
         int rows = 0;
         for (std::size_t scan = index; scan < commands_.size() &&
@@ -806,8 +806,8 @@ private:
 
     void buildImage(QTextCursor& cursor, const Command& command, int depth) {
         auto block = bodyBlockFormat(125);
-        block.setTopMargin(7);
-        block.setBottomMargin(17);
+        block.setTopMargin(6);
+        block.setBottomMargin(13);
         beginBlock(cursor, block, depth);
         buildInlineImage(cursor, command);
         cursor.insertBlock();
@@ -864,7 +864,7 @@ private:
 
     int effectiveSideMargin() const {
         const int base = settings_.value("documentPadding").toInt(48);
-        return std::max(base, (viewport()->width() - 1680) / 2);
+        return std::max(base, (viewport()->width() - 1760) / 2);
     }
 
     void applyDocumentWidth() {
@@ -875,8 +875,8 @@ private:
         const auto margin = static_cast<qreal>(effectiveSideMargin());
         format.setLeftMargin(margin);
         format.setRightMargin(margin);
-        format.setTopMargin(24.0);
-        format.setBottomMargin(28.0);
+        format.setTopMargin(30.0);
+        format.setBottomMargin(34.0);
         document()->rootFrame()->setFrameFormat(format);
     }
 
