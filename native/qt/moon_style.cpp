@@ -31,6 +31,14 @@ void apply(QApplication& application) {
         QPushButton:pressed { background: #303030; }
         QPushButton:focus { border: 1px solid #c8c8c8; }
         QPushButton:disabled { color: #525252; background: #101010; border-color: #242424; }
+        #primaryAction { background: #dedede; color: #111111; border-color: #dedede; font-weight: 600; }
+        #primaryAction:hover { background: #f0f0f0; border-color: #f0f0f0; }
+        #primaryAction:pressed { background: #c2c2c2; border-color: #c2c2c2; }
+        #primaryAction:focus { border: 1px solid #ffffff; }
+        #toolbarButton { background: transparent; border-color: #383838; }
+        #toolbarButton:hover { background: #242424; border-color: #505050; }
+        #toolbarButton:pressed { background: #303030; }
+        #commandSeparator { color: #353535; }
         #captionButton { border: 0; border-radius: 0; background: transparent; font-size: 15px; padding: 0; }
         #captionButton:hover { background: #242424; }
         #captionButton:pressed { background: #303030; }

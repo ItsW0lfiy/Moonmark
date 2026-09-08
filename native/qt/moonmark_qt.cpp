@@ -228,7 +228,7 @@ class MoonButton final : public QPushButton {
 public:
     explicit MoonButton(const QString& text, QWidget* parent = nullptr) : QPushButton(text, parent) {
         setCursor(Qt::PointingHandCursor);
-        setMinimumHeight(28);
+        setMinimumHeight(moonmark::style::metric::control_height);
         setFocusPolicy(Qt::StrongFocus);
     }
 };
@@ -1035,7 +1035,7 @@ private:
 class TitleBar final : public QWidget {
 public:
     explicit TitleBar(QWidget* window) : QWidget(window), window_(window) {
-        setFixedHeight(43);
+        setFixedHeight(moonmark::style::metric::title_bar_height);
         setObjectName(QStringLiteral("titleBar"));
     }
 
@@ -1401,56 +1401,25 @@ private:
 
         title_bar_ = new TitleBar(this);
         auto* title_layout = new QHBoxLayout(title_bar_);
-        title_layout->setContentsMargins(10, 6, 0, 6);
-        title_layout->setSpacing(7);
+        title_layout->setContentsMargins(14, 0, 0, 0);
+        title_layout->setSpacing(9);
 
         auto* symbol = new QLabel;
         QPixmap symbol_pixmap(
             applicationAssetPath(QStringLiteral("assets/branding/moonmark-symbol.png")));
-        symbol->setPixmap(symbol_pixmap.scaled(24, 24, Qt::KeepAspectRatio,
+        symbol->setPixmap(symbol_pixmap.scaled(22, 22, Qt::KeepAspectRatio,
                                                Qt::SmoothTransformation));
-        symbol->setFixedSize(27, 27);
+        symbol->setFixedSize(24, 24);
         symbol->setAccessibleName(QStringLiteral("Moonmark"));
         title_layout->addWidget(symbol);
 
-        open_ = new MoonButton(QStringLiteral("Open"));
-        open_->setAccessibleName(QStringLiteral("Open Markdown file"));
-        QObject::connect(open_, &QPushButton::clicked, this, [this] { chooseDocument(); });
-        title_layout->addWidget(open_);
-
-        reload_ = new MoonButton(QStringLiteral("Reload"));
-        reload_->setEnabled(false);
-        reload_->setAccessibleName(QStringLiteral("Reload current Markdown file"));
-        QObject::connect(reload_, &QPushButton::clicked, this, [this] { reloadDocument(); });
-        title_layout->addWidget(reload_);
-
-        title_layout->addStretch(1);
         title_label_ = new QLabel(QStringLiteral("Moonmark"));
         title_label_->setObjectName(QStringLiteral("documentTitle"));
-        title_label_->setAlignment(Qt::AlignCenter);
-        title_label_->setMinimumWidth(160);
-        title_label_->setMaximumWidth(520);
+        title_label_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+        title_label_->setMinimumWidth(0);
+        title_label_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         title_layout->addWidget(title_label_);
         title_layout->addStretch(1);
-
-        zoom_out_ = new MoonButton(QStringLiteral("−"));
-        zoom_out_->setObjectName(QStringLiteral("zoomLeft"));
-        zoom_out_->setFixedWidth(30);
-        zoom_out_->setAccessibleName(QStringLiteral("Zoom out"));
-        zoom_label_ = new QLabel(QStringLiteral("100%"));
-        zoom_label_->setObjectName(QStringLiteral("zoomValue"));
-        zoom_label_->setAlignment(Qt::AlignCenter);
-        zoom_label_->setFixedSize(52, 28);
-        zoom_in_ = new MoonButton(QStringLiteral("+"));
-        zoom_in_->setObjectName(QStringLiteral("zoomRight"));
-        zoom_in_->setFixedWidth(30);
-        zoom_in_->setAccessibleName(QStringLiteral("Zoom in"));
-        QObject::connect(zoom_out_, &QPushButton::clicked, this, [this] { changeZoom(-10); });
-        QObject::connect(zoom_in_, &QPushButton::clicked, this, [this] { changeZoom(10); });
-        title_layout->addWidget(zoom_out_);
-        title_layout->addWidget(zoom_label_);
-        title_layout->addWidget(zoom_in_);
-        title_layout->addSpacing(5);
 
         minimize_ = captionButton(QStringLiteral("—"), QStringLiteral("Minimize"));
         maximize_ = captionButton(QStringLiteral("□"), QStringLiteral("Maximize or restore"));
@@ -1464,6 +1433,68 @@ private:
         title_layout->addWidget(maximize_);
         title_layout->addWidget(close_);
         root->addWidget(title_bar_);
+
+        command_bar_ = new QWidget;
+        command_bar_->setObjectName(QStringLiteral("commandBar"));
+        command_bar_->setFixedHeight(moonmark::style::metric::command_bar_height);
+        auto* command_layout = new QHBoxLayout(command_bar_);
+        command_layout->setContentsMargins(14, 5, 14, 6);
+        command_layout->setSpacing(moonmark::style::metric::compact_spacing);
+
+        open_ = new MoonButton(QStringLiteral("Open"));
+        open_->setObjectName(QStringLiteral("primaryAction"));
+        open_->setAccessibleName(QStringLiteral("Open Markdown file"));
+        open_->setToolTip(QStringLiteral("Open Markdown file (Ctrl+O)"));
+        QObject::connect(open_, &QPushButton::clicked, this, [this] { chooseDocument(); });
+        command_layout->addWidget(open_);
+
+        reload_ = new MoonButton(QStringLiteral("Reload"));
+        reload_->setObjectName(QStringLiteral("toolbarButton"));
+        reload_->setEnabled(false);
+        reload_->setAccessibleName(QStringLiteral("Reload current Markdown file"));
+        reload_->setToolTip(QStringLiteral("Reload current file (F5)"));
+        QObject::connect(reload_, &QPushButton::clicked, this, [this] { reloadDocument(); });
+        command_layout->addWidget(reload_);
+
+        auto* action_separator = new QFrame;
+        action_separator->setObjectName(QStringLiteral("commandSeparator"));
+        action_separator->setFrameShape(QFrame::VLine);
+        action_separator->setFixedHeight(18);
+        command_layout->addSpacing(4);
+        command_layout->addWidget(action_separator);
+        command_layout->addSpacing(4);
+
+        document_context_ = new QLabel(QStringLiteral("Markdown viewer"));
+        document_context_->setObjectName(QStringLiteral("documentContext"));
+        document_context_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+        command_layout->addWidget(document_context_);
+        command_layout->addStretch(1);
+
+        auto* zoom_control = new QWidget;
+        zoom_control->setObjectName(QStringLiteral("zoomControl"));
+        zoom_control->setFixedHeight(moonmark::style::metric::control_height);
+        auto* zoom_layout = new QHBoxLayout(zoom_control);
+        zoom_layout->setContentsMargins(2, 2, 2, 2);
+        zoom_layout->setSpacing(0);
+        zoom_out_ = new MoonButton(QStringLiteral("−"));
+        zoom_out_->setObjectName(QStringLiteral("zoomButton"));
+        zoom_out_->setFixedSize(28, 26);
+        zoom_out_->setAccessibleName(QStringLiteral("Zoom out"));
+        zoom_label_ = new QLabel(QStringLiteral("100%"));
+        zoom_label_->setObjectName(QStringLiteral("zoomValue"));
+        zoom_label_->setAlignment(Qt::AlignCenter);
+        zoom_label_->setFixedSize(50, 26);
+        zoom_in_ = new MoonButton(QStringLiteral("+"));
+        zoom_in_->setObjectName(QStringLiteral("zoomButton"));
+        zoom_in_->setFixedSize(28, 26);
+        zoom_in_->setAccessibleName(QStringLiteral("Zoom in"));
+        QObject::connect(zoom_out_, &QPushButton::clicked, this, [this] { changeZoom(-10); });
+        QObject::connect(zoom_in_, &QPushButton::clicked, this, [this] { changeZoom(10); });
+        zoom_layout->addWidget(zoom_out_);
+        zoom_layout->addWidget(zoom_label_);
+        zoom_layout->addWidget(zoom_in_);
+        command_layout->addWidget(zoom_control);
+        root->addWidget(command_bar_);
 
         stack_ = new QStackedWidget;
         stack_->setObjectName(QStringLiteral("documentStack"));
@@ -1495,17 +1526,18 @@ private:
         stack_->addWidget(document_);
         root->addWidget(stack_, 1);
 
-        status_ = new QLabel;
-        status_->setObjectName(QStringLiteral("statusBar"));
-        status_->setFixedHeight(28);
-        status_->setContentsMargins(14, 0, 14, 0);
-        root->addWidget(status_);
+        diagnostics_bar_ = new QLabel;
+        diagnostics_bar_->setObjectName(QStringLiteral("diagnosticsBar"));
+        diagnostics_bar_->setFixedHeight(26);
+        diagnostics_bar_->setContentsMargins(14, 0, 14, 0);
+        diagnostics_bar_->hide();
+        root->addWidget(diagnostics_bar_);
     }
 
     MoonButton* captionButton(const QString& text, const QString& accessible_name) {
         auto* button = new MoonButton(text);
         button->setObjectName(QStringLiteral("captionButton"));
-        button->setFixedSize(46, 43);
+        button->setFixedSize(46, moonmark::style::metric::title_bar_height);
         button->setAccessibleName(accessible_name);
         return button;
     }
@@ -1570,7 +1602,8 @@ private:
         api_->window_enter_fullscreen(window_state_);
         fullscreen_ = true;
         title_bar_->hide();
-        status_->hide();
+        command_bar_->hide();
+        diagnostics_bar_->hide();
         showFullScreen();
     }
 
@@ -1578,7 +1611,8 @@ private:
         const auto restored = api_->window_leave_fullscreen(window_state_);
         fullscreen_ = false;
         title_bar_->show();
-        status_->show();
+        command_bar_->show();
+        diagnostics_bar_->setVisible(diagnostics_);
         if (restored == 1 || pre_fullscreen_maximized_) {
             showMaximized();
         } else {
@@ -1588,8 +1622,15 @@ private:
 
     void updateStatus() {
         const auto counters = api_->backend_counters(backend_);
+        document_context_->setText(current_path_.isEmpty()
+                                       ? QStringLiteral("Markdown viewer")
+                                       : QStringLiteral("%1 image%2")
+                                             .arg(document_->discoveredImages())
+                                             .arg(document_->discoveredImages() == 1
+                                                      ? QString()
+                                                      : QStringLiteral("s")));
         if (diagnostics_) {
-            status_->setText(
+            diagnostics_bar_->setText(
                 QStringLiteral("%1/%2 images · revision/load %3 · parsed %4× · document %5 µs · cache %6 MiB")
                     .arg(document_->loadedImages())
                     .arg(document_->discoveredImages())
@@ -1598,19 +1639,15 @@ private:
                     .arg(document_->constructionMicros())
                     .arg(static_cast<double>(counters.image_cache_bytes) / (1024.0 * 1024.0), 0,
                          'f', 1));
-        } else if (current_path_.isEmpty()) {
-            status_->setText(QStringLiteral("Ready"));
-        } else {
-            status_->setText(QStringLiteral("%1 images · %2% zoom")
-                                 .arg(document_->discoveredImages())
-                                 .arg(document_->zoomPercent()));
         }
+        diagnostics_bar_->setVisible(diagnostics_ && !fullscreen_);
     }
 
     const MoonmarkApiTable* api_ = nullptr;
     void* backend_ = nullptr;
     void* window_state_ = nullptr;
     TitleBar* title_bar_ = nullptr;
+    QWidget* command_bar_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     DocumentView* document_ = nullptr;
     MoonButton* open_ = nullptr;
@@ -1622,7 +1659,8 @@ private:
     MoonButton* close_ = nullptr;
     QLabel* zoom_label_ = nullptr;
     QLabel* title_label_ = nullptr;
-    QLabel* status_ = nullptr;
+    QLabel* document_context_ = nullptr;
+    QLabel* diagnostics_bar_ = nullptr;
     QFileSystemWatcher* watcher_ = nullptr;
     QTimer reload_delay_;
     QString current_path_;
