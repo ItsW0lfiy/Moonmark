@@ -43,7 +43,7 @@ void apply(QApplication& application) {
         #captionButton:hover { background: #242424; }
         #captionButton:pressed { background: #303030; }
         #closeButton:hover { background: #612f2f; color: #ffffff; }
-        #documentTitle { color: #d8d8d8; font-weight: 600; }
+        #documentTitle { color: #d8d8d8; font-size: 12px; font-weight: 600; }
         #documentContext { color: #777777; font-size: 11px; }
         #zoomControl { background: #151515; border: 1px solid #303030; border-radius: 6px; }
         #zoomButton { border: 0; border-radius: 4px; background: transparent; padding: 0; }

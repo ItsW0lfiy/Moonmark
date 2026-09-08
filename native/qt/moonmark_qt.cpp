@@ -235,6 +235,32 @@ public:
     }
 };
 
+class ElidingLabel final : public QLabel {
+public:
+    explicit ElidingLabel(const QString& text, QWidget* parent = nullptr) : QLabel(parent) {
+        setFullText(text);
+    }
+
+    void setFullText(const QString& text) {
+        full_text_ = text;
+        setToolTip(text);
+        updateElision();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QLabel::resizeEvent(event);
+        updateElision();
+    }
+
+private:
+    void updateElision() {
+        QLabel::setText(fontMetrics().elidedText(full_text_, Qt::ElideMiddle, width()));
+    }
+
+    QString full_text_;
+};
+
 class DocumentView final : public QTextEdit {
 public:
     explicit DocumentView(const MoonmarkApiTable* api, void* backend, QWidget* parent = nullptr)
@@ -1077,7 +1103,7 @@ public:
         api_->buffer_free(buffer);
         document_->load(root);
         current_path_ = file.canonicalFilePath();
-        title_label_->setText(file.fileName());
+        title_label_->setFullText(file.fileName());
         title_label_->setToolTip(current_path_);
         setWindowTitle(QStringLiteral("%1 — Moonmark").arg(file.fileName()));
         stack_->setCurrentWidget(document_);
@@ -1403,13 +1429,16 @@ private:
                                                Qt::SmoothTransformation));
         symbol->setFixedSize(24, 24);
         symbol->setAccessibleName(QStringLiteral("Moonmark"));
+        symbol->setAttribute(Qt::WA_TransparentForMouseEvents);
         title_layout->addWidget(symbol);
 
-        title_label_ = new QLabel(QStringLiteral("Moonmark"));
+        title_label_ = new ElidingLabel(QStringLiteral("Moonmark"));
         title_label_->setObjectName(QStringLiteral("documentTitle"));
         title_label_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-        title_label_->setMinimumWidth(0);
-        title_label_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        title_label_->setMinimumWidth(180);
+        title_label_->setMaximumWidth(640);
+        title_label_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+        title_label_->setAttribute(Qt::WA_TransparentForMouseEvents);
         title_layout->addWidget(title_label_);
         title_layout->addStretch(1);
 
@@ -1651,7 +1680,7 @@ private:
     MoonButton* maximize_ = nullptr;
     MoonButton* close_ = nullptr;
     QLabel* zoom_label_ = nullptr;
-    QLabel* title_label_ = nullptr;
+    ElidingLabel* title_label_ = nullptr;
     QLabel* document_context_ = nullptr;
     QLabel* diagnostics_bar_ = nullptr;
     QFileSystemWatcher* watcher_ = nullptr;
