@@ -159,9 +159,8 @@ fn stage_windows_runtime(qt: &Path) {
 
 fn stage_application_assets(manifest: &Path) {
     let output = profile_output_dir();
-    for relative in ["assets/branding/moonmark-symbol.png"] {
-        copy_if_changed(&manifest.join(relative), &output.join(relative));
-    }
+    let relative = "assets/branding/moonmark-symbol.png";
+    copy_if_changed(&manifest.join(relative), &output.join(relative));
 }
 
 fn copy_if_changed(source: &Path, target: &Path) {
