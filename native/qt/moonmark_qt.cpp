@@ -580,7 +580,8 @@ private:
         cursor.insertBlock();
     }
 
-    void insertInline(QTextCursor& cursor, const Command& command, double points, bool heading) {
+    void insertInline(QTextCursor& cursor, const Command& command, double points, bool heading,
+                      bool table_context = false) {
         if (command.kind == command_kind::soft_break) {
             cursor.insertText(QStringLiteral(" "), baseCharacterFormat(points));
             return;
@@ -616,7 +617,7 @@ private:
         if ((command.flags & text_style::code) != 0) {
             format.setFontFamilies({QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas")});
             format.setFontPointSize(points * 0.9);
-            format.setBackground(QColor(colour::raised));
+            if (!table_context) format.setBackground(QColor(colour::surface));
             format.setForeground(QColor(colour::bright));
         }
         if ((command.flags & text_style::link) != 0) {
@@ -781,9 +782,11 @@ private:
             cursor.insertBlock();
         }
         QTextTableFormat table_format;
-        table_format.setBorder(1.0);
-        table_format.setBorderBrush(QColor(colour::border));
-        table_format.setCellPadding(8.0);
+        table_format.setBorder(0);
+        table_format.setBorderCollapse(true);
+        table_format.setHeaderRowCount(1);
+        table_format.setWidth(QTextLength(QTextLength::PercentageLength, 100));
+        table_format.setCellPadding(0);
         table_format.setCellSpacing(0.0);
         table_format.setTopMargin(6.0);
         table_format.setBottomMargin(13.0);
@@ -804,20 +807,34 @@ private:
             }
             int column = 0;
             while (index < commands_.size() && commands_[index].kind != command_kind::end_row) {
-                if (commands_[index++].kind != command_kind::begin_cell) {
+                const auto cell_command = commands_[index++];
+                if (cell_command.kind != command_kind::begin_cell) {
                     continue;
                 }
                 auto cell = table->cellAt(row, std::min(column, columns - 1));
-                auto cell_format = cell.format();
-                cell_format.setBackground((row_command.flags & text_style::header) != 0
-                                              ? QColor(colour::raised)
-                                              : QColor(colour::document));
+                auto cell_format = cell.format().toTableCellFormat();
+                const bool header = (row_command.flags & text_style::header) != 0;
+                cell_format.setTopPadding(7);
+                cell_format.setBottomPadding(7);
+                cell_format.setLeftPadding(column == 0 ? 0 : 12);
+                cell_format.setRightPadding(column == columns - 1 ? 0 : 12);
+                if (row < rows - 1) {
+                    cell_format.setBottomBorder(1);
+                    cell_format.setBottomBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+                    cell_format.setBottomBorderBrush(QColor(header ? colour::border_strong :
+                                                                     colour::border));
+                }
                 cell.setFormat(cell_format);
                 auto cell_cursor = cell.firstCursorPosition();
-                cell_cursor.setBlockFormat(bodyBlockFormat(145));
+                auto cell_block = bodyBlockFormat(140);
+                cell_block.setTopMargin(0);
+                cell_block.setBottomMargin(0);
+                cell_block.setAlignment(cell_command.number == 2 ? Qt::AlignRight :
+                                       cell_command.number == 1 ? Qt::AlignHCenter : Qt::AlignLeft);
+                cell_cursor.setBlockFormat(cell_block);
                 while (index < commands_.size() && commands_[index].kind != command_kind::end_cell) {
                     insertInline(cell_cursor, commands_[index], 11.25,
-                                 (row_command.flags & text_style::header) != 0);
+                                 (row_command.flags & text_style::header) != 0, true);
                     ++index;
                 }
                 if (index < commands_.size()) {

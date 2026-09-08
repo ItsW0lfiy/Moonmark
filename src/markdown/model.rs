@@ -23,6 +23,7 @@ pub enum Block {
     Table {
         header: TableRow,
         rows: Vec<TableRow>,
+        alignments: Vec<TableAlignment>,
     },
     HorizontalRule,
     RawHtml(String),
@@ -37,6 +38,14 @@ pub struct ListItem {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TableRow {
     pub cells: Vec<Vec<Inline>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum TableAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
 }
 
 #[derive(Clone, Debug, PartialEq)]

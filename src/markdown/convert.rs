@@ -169,7 +169,11 @@ impl Converter<'_> {
                     command.spans = highlight_code(language, source);
                 }
             }
-            Block::Table { header, rows } => {
+            Block::Table {
+                header,
+                rows,
+                alignments,
+            } => {
                 self.push(
                     kind::BEGIN_TABLE,
                     0,
@@ -179,9 +183,9 @@ impl Converter<'_> {
                     "",
                     header.cells.len() as i64,
                 );
-                self.table_row(header, true);
+                self.table_row(header, true, alignments);
                 for row in rows {
-                    self.table_row(row, false);
+                    self.table_row(row, false, alignments);
                 }
                 self.push(kind::END_TABLE, 0, 0, "", "", "", 0);
             }
@@ -201,7 +205,12 @@ impl Converter<'_> {
         self.push(kind::END_ITEM, 0, 0, "", "", "", 0);
     }
 
-    fn table_row(&mut self, row: &TableRow, header: bool) {
+    fn table_row(
+        &mut self,
+        row: &TableRow,
+        header: bool,
+        alignments: &[super::model::TableAlignment],
+    ) {
         self.push(
             kind::BEGIN_ROW,
             0,
@@ -211,8 +220,14 @@ impl Converter<'_> {
             "",
             0,
         );
-        for cell in &row.cells {
-            self.push(kind::BEGIN_CELL, 0, 0, "", "", "", 0);
+        for (column, cell) in row.cells.iter().enumerate() {
+            use super::model::TableAlignment;
+            let alignment = match alignments.get(column).copied().unwrap_or_default() {
+                TableAlignment::Left => 0,
+                TableAlignment::Center => 1,
+                TableAlignment::Right => 2,
+            };
+            self.push(kind::BEGIN_CELL, 0, 0, "", "", "", alignment);
             self.inlines(cell, if header { style::STRONG } else { 0 });
             self.push(kind::END_CELL, 0, 0, "", "", "", 0);
         }
@@ -381,6 +396,24 @@ fn heading_slug(title: &str) -> String {
 mod tests {
     use super::*;
     use crate::markdown::parse;
+
+    #[test]
+    fn table_alignment_survives_the_framework_neutral_boundary() {
+        let model = parse("| Left | Center | Right |\n|:---|:---:|---:|\n| one | two | three |\n");
+        let (presentation, _) = to_presentation(
+            &model,
+            std::path::Path::new("table.md"),
+            PresentationMetrics::default(),
+            &Settings::default(),
+        );
+        let alignment: Vec<_> = presentation
+            .commands
+            .iter()
+            .filter(|command| command.kind == kind::BEGIN_CELL)
+            .map(|command| command.number)
+            .collect();
+        assert_eq!(alignment, [0, 1, 2, 0, 1, 2]);
+    }
 
     #[test]
     fn repeated_image_references_share_one_decode_request() {

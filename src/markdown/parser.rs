@@ -83,10 +83,24 @@ fn parse_block<'a>(node: &'a AstNode<'a>) -> Option<Block> {
 }
 
 fn parse_table<'a>(node: &'a AstNode<'a>) -> Block {
+    use super::model::TableAlignment;
+    let alignments = match &node.data.borrow().value {
+        NodeValue::Table(table) => table
+            .alignments
+            .iter()
+            .map(|alignment| match alignment {
+                comrak::nodes::TableAlignment::Center => TableAlignment::Center,
+                comrak::nodes::TableAlignment::Right => TableAlignment::Right,
+                _ => TableAlignment::Left,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     let mut rows = node.children().map(parse_table_row);
     Block::Table {
         header: rows.next().unwrap_or_default(),
         rows: rows.collect(),
+        alignments,
     }
 }
 
