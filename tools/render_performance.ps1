@@ -22,6 +22,8 @@ foreach ($case in @(
     Write-Output ($case -join ' ')
     Write-Output $stdout.Result
     Write-Output $stderr.Result
-    Write-Output "EXIT=$($process.ExitCode)"
+    $code = $process.ExitCode
+    Write-Output "EXIT=$code"
     $process.Dispose()
+    if ($code -ne 0) { throw "Smoke failed: $($case -join ' ') ($code)" }
 }

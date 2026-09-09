@@ -386,8 +386,24 @@ public:
         QKeyEvent copy_event(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
         QApplication::sendEvent(this, &copy_event);
         const auto copied = QGuiApplication::clipboard()->text();
+        bool inline_ok = true;
+        int inline_count = 0;
+        for (auto block = document()->begin(); block.isValid(); block = block.next()) {
+            for (auto it = block.begin(); !it.atEnd(); ++it) {
+                const auto fragment = it.fragment();
+                if (!fragment.charFormat().boolProperty(inline_code_property)) continue;
+                QTextCursor span(document());
+                span.setPosition(fragment.position());
+                span.setPosition(fragment.position() + fragment.length(), QTextCursor::KeepAnchor);
+                setTextCursor(span);
+                QApplication::sendEvent(this, &copy_event);
+                inline_ok &= QGuiApplication::clipboard()->text() == fragment.text();
+                ++inline_count;
+            }
+        }
+        std::fprintf(stdout, "INLINE_COPY spans=%d exact=%s\n", inline_count, inline_ok ? "ok" : "failed");
         QGuiApplication::clipboard()->setMimeData(previous);
-        return copied.size() > 40 && !copied.contains(QChar::ObjectReplacementCharacter) &&
+        return inline_ok && copied.size() > 40 && !copied.contains(QChar::ObjectReplacementCharacter) &&
                !copied.contains(QChar(0xFDD0)) && !copied.contains(QChar(0xFDD1));
     }
 
@@ -567,7 +583,7 @@ public:
                          occurrence.id, occurrence.loaded, zoom_percent_, image.height(), bounds.height(),
                          next.top(), excess, block.blockFormat().lineHeight(), block.blockFormat().lineHeightType());
             // Image-only lines must not gain paragraph-leading proportional to bitmap height.
-            if (block.text() == QString(QChar::ObjectReplacementCharacter)) ok &= excess < 32;
+            if (block.text() == QString(QChar::ObjectReplacementCharacter)) ok &= std::abs(excess) < 2;
         }
         return ok;
     }
@@ -1573,9 +1589,9 @@ public:
                         if (!character.isLetterOrNumber() && character != QLatin1Char('-'))
                             character = QLatin1Char('_');
                     }
-                    QDir::current().mkpath(QStringLiteral("target/visual-dev4"));
+                    QDir::current().mkpath(QStringLiteral("target/visual-dev5"));
                     const auto output = QDir::current().absoluteFilePath(
-                        QStringLiteral("target/visual-dev4/%1.png").arg(name));
+                        QStringLiteral("target/visual-dev5/%1.png").arg(name));
                     const auto pixels = qEnvironmentVariable("MOONMARK_SNAPSHOT_MENU") == QStringLiteral("1")
                         ? findChild<QMenu*>(QStringLiteral("documentMenu"))->grab() : grab();
                     const bool saved = pixels.save(output, "PNG");
@@ -1754,16 +1770,25 @@ public:
             deadline->setInterval(25);
             auto* elapsed = new QElapsedTimer;
             elapsed->start();
-            QObject::connect(deadline, &QTimer::timeout, this, [this, deadline, elapsed, geometry] {
+            QObject::connect(deadline, &QTimer::timeout, this,
+                             [this, deadline, elapsed, geometry, pass = 0, geometry_ok = true]() mutable {
                 const bool finished = document_->pendingImageDecodes() == 0;
                 const bool timed_out = elapsed->elapsed() > 20000;
                 if (!finished && !timed_out) {
                     return;
                 }
                 const auto completion_ms = elapsed->elapsed();
-                bool geometry_ok = true;
                 if (geometry) {
                     geometry_ok &= document_->testImageGeometry();
+                    if (pass++ == 0) {
+                        resize(800, 700);
+                        geometry_ok &= document_->testImageGeometry();
+                        resize(1280, 820);
+                        geometry_ok &= document_->testImageGeometry();
+                        reloadDocument();
+                        document_->queueAllImagesForSmoke();
+                        return;
+                    }
                     for (const int zoom : {125, 150, 100, 80, 100}) {
                         document_->changeZoom(zoom - document_->zoomPercent());
                         geometry_ok &= document_->testImageGeometry();
