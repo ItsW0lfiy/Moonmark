@@ -2,6 +2,8 @@
 
 #include <QTextBlock>
 #include <QTextCursor>
+#include <QElapsedTimer>
+#include <cstdio>
 #include <cmath>
 
 namespace moonmark::qt {
@@ -55,6 +57,8 @@ void DocumentZoom::captureFrame(QTextFrame* frame) {
 void DocumentZoom::apply(int percent) {
     if (!document_) return;
     const double ratio = percent / 100.0;
+    QElapsedTimer timer;
+    timer.start();
     auto font = font_;
     font.setPointSizeF(font_.pointSizeF() * ratio);
     document_->setDefaultFont(font);
@@ -75,6 +79,7 @@ void DocumentZoom::apply(int percent) {
         cursor.setPosition(span.position + span.length, QTextCursor::KeepAnchor);
         cursor.setCharFormat(scaled(span.format, ratio));
     }
+    const auto text_us = timer.nsecsElapsed() / 1000;
     for (const auto& frame : frames_) {
         if (!frame.frame) continue;
         if (auto* table = qobject_cast<QTextTable*>(frame.frame.data())) {
@@ -91,6 +96,9 @@ void DocumentZoom::apply(int percent) {
     }
     for (auto& cell : cells_) cell.cell.setFormat(scaled(cell.format, ratio));
     cursor.endEditBlock();
+    if (qEnvironmentVariableIsSet("MOONMARK_PROFILE"))
+        std::fprintf(stdout, "ZOOM_FORMAT text_us=%lld total_us=%lld\n",
+                     static_cast<long long>(text_us), static_cast<long long>(timer.nsecsElapsed() / 1000));
 }
 
 bool DocumentZoom::matches(int percent) const {

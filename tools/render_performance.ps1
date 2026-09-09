@@ -1,0 +1,27 @@
+param([string]$Executable = 'target/release/moonmark.exe')
+$ErrorActionPreference = 'Stop'
+foreach ($case in @(
+    @('image-geometry', 'fixtures/image-layout-regression.md'),
+    @('zoom', 'fixtures/moonmark-visual-test.md'),
+    @('zoom', 'fixtures/generated/large-text.md'),
+    @('images', 'fixtures/generated/image-stress.md')
+)) {
+    $start = [Diagnostics.ProcessStartInfo]::new((Resolve-Path -LiteralPath $Executable).Path)
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.ArgumentList.Add('--smoke-' + $case[0])
+    $start.ArgumentList.Add($case[1])
+    $process = [Diagnostics.Process]::Start($start)
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    if (!$process.WaitForExit(60000)) {
+        $process.Kill()
+        throw "Smoke timed out: $($case -join ' ')"
+    }
+    Write-Output ($case -join ' ')
+    Write-Output $stdout.Result
+    Write-Output $stderr.Result
+    Write-Output "EXIT=$($process.ExitCode)"
+    $process.Dispose()
+}

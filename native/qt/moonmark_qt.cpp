@@ -515,13 +515,15 @@ public:
             QElapsedTimer timer;
             timer.start();
             changeZoom(percent - zoomPercent());
+            const auto interactive_us = timer.nsecsElapsed() / 1000;
             const bool metrics = zoom_layout_.matches(percent);
             const bool retained = textCursor().position() == selection.position() &&
                                   textCursor().anchor() == selection.anchor();
             ok &= metrics && retained && plainText() == text_before;
-            std::fprintf(stdout, "ZOOM percent=%d metrics=%s selection=%s height=%.1f elapsed_us=%lld\n",
+            std::fprintf(stdout, "ZOOM percent=%d metrics=%s selection=%s height=%.1f interactive_us=%lld elapsed_us=%lld\n",
                          percent, metrics ? "ok" : "failed", retained ? "ok" : "failed",
-                         document()->size().height(), static_cast<long long>(timer.nsecsElapsed() / 1000));
+                         document()->size().height(), static_cast<long long>(interactive_us),
+                         static_cast<long long>(timer.nsecsElapsed() / 1000));
         }
         const auto after = api_->backend_counters(backend_);
         ok &= before.parse_count == after.parse_count && before.load_count == after.load_count &&
@@ -530,6 +532,27 @@ public:
                      ok ? "ok" : "failed", after.parse_count - before.parse_count,
                      after.load_count - before.load_count, constructionCount() - constructions,
                      after.image_request_count - before.image_request_count);
+        return ok;
+    }
+
+    bool testImageGeometry() {
+        bool ok = true;
+        for (const auto& occurrence : image_occurrences_) {
+            QTextCursor cursor(document());
+            cursor.setPosition(occurrence.position);
+            cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+            const auto image = cursor.charFormat().toImageFormat();
+            const auto block = cursor.block();
+            const auto bounds = document()->documentLayout()->blockBoundingRect(block);
+            const auto next = document()->documentLayout()->blockBoundingRect(block.next());
+            const double excess = next.top() - bounds.bottom() -
+                                  std::max(block.blockFormat().bottomMargin(), block.next().blockFormat().topMargin());
+            std::fprintf(stdout, "IMAGE_GEOMETRY id=%u loaded=%d zoom=%d image_h=%.1f block_h=%.1f next_y=%.1f excess=%.1f line_height=%.1f type=%d\n",
+                         occurrence.id, occurrence.loaded, zoom_percent_, image.height(), bounds.height(),
+                         next.top(), excess, block.blockFormat().lineHeight(), block.blockFormat().lineHeightType());
+            // Image-only lines must not gain paragraph-leading proportional to bitmap height.
+            if (block.text() == QString(QChar::ObjectReplacementCharacter)) ok &= excess < 32;
+        }
         return ok;
     }
 
@@ -1641,28 +1664,40 @@ public:
             });
             return;
         }
-        if (mode == QStringLiteral("images")) {
+        if (mode == QStringLiteral("images") || mode == QStringLiteral("image-geometry")) {
+            const bool geometry = mode == QStringLiteral("image-geometry");
+            if (geometry) document_->testImageGeometry();
             document_->queueAllImagesForSmoke();
             auto* deadline = new QTimer(this);
             deadline->setInterval(25);
             auto* elapsed = new QElapsedTimer;
             elapsed->start();
-            QObject::connect(deadline, &QTimer::timeout, this, [this, deadline, elapsed] {
+            QObject::connect(deadline, &QTimer::timeout, this, [this, deadline, elapsed, geometry] {
                 const bool finished = document_->pendingImageDecodes() == 0;
                 const bool timed_out = elapsed->elapsed() > 20000;
                 if (!finished && !timed_out) {
                     return;
                 }
-                const bool ok = finished && document_->failedImageDecodes() == 0 &&
+                const auto completion_ms = elapsed->elapsed();
+                bool geometry_ok = true;
+                if (geometry) {
+                    geometry_ok &= document_->testImageGeometry();
+                    for (const int zoom : {125, 150, 100, 80, 100}) {
+                        document_->changeZoom(zoom - document_->zoomPercent());
+                        geometry_ok &= document_->testImageGeometry();
+                    }
+                }
+                const bool ok = finished && document_->failedImageDecodes() == 0 && geometry_ok &&
                                 document_->loadedImages() > 0 && document_->testZoom();
                 const auto counters = api_->backend_counters(backend_);
                 std::fprintf(stdout,
-                             "MOONMARK_SMOKE images=%s discovered=%d loaded=%d failed=%d pending=%d requests=%llu cache_bytes=%llu elapsed_ms=%lld\n",
+                             "MOONMARK_SMOKE images=%s discovered=%d loaded=%d failed=%d pending=%d requests=%llu cache_bytes=%llu completion_ms=%lld elapsed_ms=%lld\n",
                              ok ? "ok" : "failed", document_->discoveredImages(),
                              document_->loadedImages(), document_->failedImageDecodes(),
                              document_->pendingImageDecodes(),
                              static_cast<unsigned long long>(counters.image_request_count),
                              static_cast<unsigned long long>(counters.image_cache_bytes),
+                             static_cast<long long>(completion_ms),
                              static_cast<long long>(elapsed->elapsed()));
                 std::fflush(stdout);
                 deadline->stop();
@@ -2152,6 +2187,8 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
             smoke_mode = QStringLiteral("layout-normal");
         } else if (argument == QStringLiteral("--smoke-watcher")) {
             smoke_mode = QStringLiteral("watcher");
+        } else if (argument == QStringLiteral("--smoke-image-geometry")) {
+            smoke_mode = QStringLiteral("image-geometry");
         } else if (argument == QStringLiteral("--smoke-images")) {
             smoke_mode = QStringLiteral("images");
         } else if (!argument.startsWith(QLatin1Char('-')) && QFileInfo::exists(argument)) {
