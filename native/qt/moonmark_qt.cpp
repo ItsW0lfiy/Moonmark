@@ -491,15 +491,23 @@ public:
         const int anchor_y = cursorRect(anchor).top();
         const bool at_top = verticalScrollBar()->value() == 0;
         zoom_percent_ = percent;
+        QElapsedTimer profile;
+        profile.start();
         setUpdatesEnabled(false);
         zoom_layout_.apply(percent);
+        const auto formats_us = profile.nsecsElapsed() / 1000;
         applyDocumentWidth();
         resizeLoadedImages();
+        const auto images_us = profile.nsecsElapsed() / 1000;
         setTextCursor(selection);
         verticalScrollBar()->setValue(at_top ? 0 : verticalScrollBar()->value() +
                                         cursorRect(anchor).top() - anchor_y);
         setUpdatesEnabled(true);
         if (zoomChanged) zoomChanged(zoom_percent_);
+        if (qEnvironmentVariableIsSet("MOONMARK_PROFILE"))
+            std::fprintf(stdout, "ZOOM_PHASE formats_us=%lld image_geometry_us=%lld anchor_layout_us=%lld\n",
+                         static_cast<long long>(formats_us), static_cast<long long>(images_us - formats_us),
+                         static_cast<long long>(profile.nsecsElapsed() / 1000 - images_us));
     }
 
     [[nodiscard]] int zoomPercent() const { return zoom_percent_; }
@@ -519,13 +527,16 @@ public:
             timer.start();
             changeZoom(percent - zoomPercent());
             const auto interactive_us = timer.nsecsElapsed() / 1000;
+            viewport()->repaint();
+            const auto painted_us = timer.nsecsElapsed() / 1000;
             const bool metrics = zoom_layout_.matches(percent);
             const bool retained = textCursor().position() == selection.position() &&
                                   textCursor().anchor() == selection.anchor();
             ok &= metrics && retained && plainText() == text_before;
-            std::fprintf(stdout, "ZOOM percent=%d metrics=%s selection=%s height=%.1f interactive_us=%lld elapsed_us=%lld\n",
+            std::fprintf(stdout, "ZOOM percent=%d metrics=%s selection=%s height=%.1f interactive_us=%lld painted_us=%lld elapsed_us=%lld\n",
                          percent, metrics ? "ok" : "failed", retained ? "ok" : "failed",
                          document()->size().height(), static_cast<long long>(interactive_us),
+                         static_cast<long long>(painted_us),
                          static_cast<long long>(timer.nsecsElapsed() / 1000));
         }
         const auto after = api_->backend_counters(backend_);
@@ -1285,6 +1296,11 @@ private:
     }
 
     void pollImages() {
+        QElapsedTimer profile;
+        profile.start();
+        qint64 copy_us = 0;
+        qint64 geometry_us = 0;
+        int count = 0;
         bool received = false;
         while (true) {
             auto result = api_->poll_image(backend_);
@@ -1292,6 +1308,7 @@ private:
                 break;
             }
             received = true;
+            ++count;
             const auto error = fromBuffer(result.error);
             if (result.error.data != nullptr) {
                 api_->buffer_free(result.error);
@@ -1311,7 +1328,9 @@ private:
                 const auto width = static_cast<int>(result.width);
                 const auto height = static_cast<int>(result.height);
                 QImage view(result.pixels.data, width, height, width * 4, QImage::Format_RGBA8888);
+                const auto copy_start = profile.nsecsElapsed();
                 document()->addResource(QTextDocument::ImageResource, resource, view.copy());
+                copy_us += (profile.nsecsElapsed() - copy_start) / 1000;
                 for (auto& occurrence : image_occurrences_) {
                     if (occurrence.id == result.id) {
                         occurrence.loaded = true;
@@ -1323,10 +1342,16 @@ private:
             if (result.pixels.data != nullptr) {
                 api_->buffer_free(result.pixels);
             }
+            const auto geometry_start = profile.nsecsElapsed();
             updateImageFormats(result.id);
+            geometry_us += (profile.nsecsElapsed() - geometry_start) / 1000;
         }
         if (received) {
             viewport()->update();
+            if (qEnvironmentVariableIsSet("MOONMARK_PROFILE"))
+                std::fprintf(stdout, "IMAGE_DELIVERY results=%d copy_us=%lld geometry_us=%lld total_us=%lld\n",
+                             count, static_cast<long long>(copy_us), static_cast<long long>(geometry_us),
+                             static_cast<long long>(profile.nsecsElapsed() / 1000));
         }
         const bool pending = std::any_of(image_occurrences_.cbegin(), image_occurrences_.cend(),
                                          [](const auto& image) {

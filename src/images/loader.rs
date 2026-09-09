@@ -50,11 +50,22 @@ impl ImagePipeline {
         let cache = Arc::clone(&self.cache);
         let generation = Arc::clone(&self.generation);
         let request_generation = generation.load(Ordering::Acquire);
+        let profile = std::env::var_os("MOONMARK_PROFILE").is_some();
+        let queued_at = std::time::Instant::now();
         self.pool.spawn(move || {
             if generation.load(Ordering::Acquire) != request_generation {
                 return;
             }
+            let started = std::time::Instant::now();
             let result = decode(&request);
+            if profile {
+                eprintln!(
+                    "IMAGE_WORKER id={} queue_us={} decode_us={}",
+                    request.id,
+                    started.duration_since(queued_at).as_micros(),
+                    started.elapsed().as_micros()
+                );
+            }
             if generation.load(Ordering::Acquire) != request_generation {
                 return;
             }
