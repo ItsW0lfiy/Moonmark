@@ -28,6 +28,8 @@ fn run_smoke(mode: &str, fixture_name: &str) -> String {
 
 #[test]
 fn qt_frontend_smoke_matrix() {
+    let output = run_smoke("--smoke-image-geometry", "image-layout-regression.md");
+    assert!(output.contains("images=ok"), "{output}");
     let output = run_smoke("--smoke-navigation", "concept-presentation.md");
     assert!(output.contains("navigation=ok"), "{output}");
     let output = run_smoke("--smoke-zoom", "moonmark-visual-test.md");

@@ -1125,7 +1125,9 @@ private:
     }
 
     void buildImage(QTextCursor& cursor, const Command& command, int depth) {
-        auto block = bodyBlockFormat(125);
+        // Qt applies proportional leading to the image height, not just the font.
+        // Image-only blocks use explicit margins instead of bitmap-sized line leading.
+        auto block = bodyBlockFormat(100);
         block.setTopMargin(6);
         block.setBottomMargin(13);
         beginBlock(cursor, block, depth);
