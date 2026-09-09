@@ -32,6 +32,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPalette>
 #include <QPointer>
 #include <QPixmap>
@@ -53,6 +54,7 @@
 #include <QTextFrameFormat>
 #include <QTextImageFormat>
 #include <QTextListFormat>
+#include <QTextLayout>
 #include <QTextTable>
 #include <QTextTableCell>
 #include <QTextTableFormat>
@@ -85,6 +87,7 @@ namespace {
 
 namespace colour = moonmark::style::colour;
 constexpr int quote_depth_property = QTextFormat::UserProperty + 1;
+constexpr int inline_code_property = QTextFormat::UserProperty + 2;
 
 namespace command_kind {
 constexpr int begin_paragraph = 1;
@@ -567,6 +570,7 @@ protected:
             QTextCursor cursor(block);
             const auto first = cursorRect(cursor);
             if (first.top() > viewport()->height()) break;
+            paintInlineCodeEdges(painter, block);
             const int depth = block.blockFormat().intProperty(quote_depth_property);
             if (depth == 0 || block.text().isEmpty()) continue;
             cursor.movePosition(QTextCursor::EndOfBlock);
@@ -582,6 +586,50 @@ protected:
                 painter.drawLine(x, first.top() - 3, x, bottom);
             }
         }
+    }
+
+    void paintInlineCodeEdges(QPainter& painter, const QTextBlock& block) const {
+        const auto* layout = block.layout();
+        if (!layout) return;
+        const auto origin = document()->documentLayout()->blockBoundingRect(block).topLeft() -
+                            QPointF(horizontalScrollBar()->value(), verticalScrollBar()->value());
+        const auto selection = textCursor();
+        const double padding = 2.5 * zoom_percent_ / 100.0;
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(colour::inline_code));
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const auto fragment = it.fragment();
+            if (!fragment.charFormat().boolProperty(inline_code_property)) continue;
+            // Native selection remains authoritative, including partial span selection.
+            if (selection.hasSelection() && selection.selectionStart() < fragment.position() + fragment.length() &&
+                selection.selectionEnd() > fragment.position()) continue;
+            const QFontMetricsF metrics(fragment.charFormat().font());
+            for (int index = 0; index < layout->lineCount(); ++index) {
+                const auto line = layout->lineAt(index);
+                const int start = std::max(fragment.position() - block.position(), line.textStart());
+                int end = std::min(fragment.position() + fragment.length() - block.position(),
+                                   line.textStart() + line.textLength());
+                // Qt does not paint trailing wrapping whitespace; do not outline that empty area.
+                const auto text = block.text();
+                while (end > start && text.at(end - 1).isSpace()) --end;
+                if (start >= end) continue;
+                const auto x1 = line.cursorToX(start);
+                const auto x2 = line.cursorToX(end);
+                const QRectF ink(origin.x() + std::min(x1, x2),
+                                 origin.y() + line.y() + line.ascent() - metrics.ascent(),
+                                 std::abs(x2 - x1), metrics.height());
+                QPainterPath outer;
+                outer.addRoundedRect(ink.adjusted(-padding, -1, padding, 1), padding + 1, padding + 1);
+                QPainterPath native_text;
+                native_text.addRect(ink);
+                // Extend only the native character background. Never repaint glyphs or
+                // replace text objects; copy, shaping, wrapping and hit testing stay Qt-owned.
+                painter.drawPath(outer.subtracted(native_text));
+            }
+        }
+        painter.restore();
     }
 
     void resizeEvent(QResizeEvent* event) override {
@@ -826,6 +874,7 @@ private:
             format.setFontFamilies({QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas")});
             format.setFontPointSize(points * 0.9);
             format.setBackground(QColor(colour::inline_code));
+            format.setProperty(inline_code_property, true);
             format.setForeground(QColor(colour::bright));
         }
         if ((command.flags & text_style::link) != 0) {

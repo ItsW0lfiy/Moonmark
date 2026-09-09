@@ -1,6 +1,10 @@
 param([string]$Executable = 'target/debug/moonmark.exe')
 $ErrorActionPreference = 'Stop'
 $cases = @(
+    @('inline-prose-table', 'fixtures/inline-code-quality.md', 1200, 900, 0),
+    @('inline-wrap', 'fixtures/inline-code-quality.md', 720, 1000, 0),
+    @('inline-selected', 'fixtures/inline-code-quality.md', 1200, 900, 0, 100, 'SELECTION'),
+    @('image-gap-after', 'fixtures/image-layout-regression.md', 1280, 820, 450),
     @('empty', '', 1200, 820, 0),
     @('prose', 'fixtures/moonmark-visual-test.md', 1200, 820, 0),
     @('headings-lists', 'fixtures/moonmark-visual-test.md', 1200, 820, 300),
