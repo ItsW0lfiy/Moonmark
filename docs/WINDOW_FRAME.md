@@ -11,3 +11,5 @@ The Windows adapter handles edge/corner `WM_NCHITTEST`, system move, caption act
 Resize, zoom, maximize, F11, and restoration operate on the existing QTextDocument. The native smoke matrix asserts zero parse, file-load, document-construction, and image-request deltas across those transitions.
 
 Physical Windows checks still required before release: Windows 10/11 snapping, mixed-DPI multi-monitor movement, exact taskbar work-area behavior, title-bar drag/resize cursors, system-menu details, focus, and Normal-to-F11 geometry restoration on more than one monitor.
+
+Dev.4 adds a collapsible sidebar and 48px breadcrumb header. F11 hides the sidebar as well as the header; leaving it restores the user's sidebar preference subject to responsive width. The navigation smoke covers keyboard outline activation, automatic narrow-window collapse, and fullscreen chrome visibility without document reconstruction.

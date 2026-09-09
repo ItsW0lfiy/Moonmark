@@ -10,3 +10,4 @@ The Qt UI thread converts returned RGBA buffers into copied QImages and releases
 
 The deterministic stress fixture contains 250 valid occurrences sharing six underlying assets plus five intentionally missing references. Missing placeholders are unavailable source references, not decoder failures.
 
+Dev.4 zoom changes the display dimensions of already-loaded resources, preserving aspect ratio and constraining images to available document width. The stress smoke exercises 100/125/150/100/80/100 percent after decoding and asserts no additional image requests, file reads, parses, or document constructions. Increased zoom may magnify an existing bounded decode rather than requesting a sharper replacement; this prevents resize/zoom decode storms.

@@ -36,7 +36,7 @@ cargo build --release
 
 `build.rs` discovers Qt, compiles the C++20 adapter with warnings enabled, links Qt dynamically, embeds the Windows icon, and stages Qt DLLs/plugins/assets beside Cargo's executable. Build failure on either language fails Cargo.
 
-Moonmark development milestones use prerelease versions such as `0.1.0-dev.1`, `0.1.0-dev.2`, and `0.1.0-dev.3`. During milestone work, each coherent source, UI, test, or documentation change receives its own descriptive commit before unrelated work begins. Commits are not squashed merely to shorten history, and pushing still requires separate explicit user approval.
+Moonmark development milestones use prerelease versions such as `0.1.0-dev.1`, `0.1.0-dev.2`, `0.1.0-dev.3`, and `0.1.0-dev.4`. During milestone work, each coherent source, UI, test, or documentation change receives its own descriptive commit before unrelated work begins. Commits are not squashed merely to shorten history, and pushing still requires separate explicit user approval.
 
 ## Fixtures and benchmarks
 
@@ -54,7 +54,7 @@ For a deterministic rendered client-area snapshot during UI review:
 cargo run -- fixtures\moonmark-visual-test.md --smoke-snapshot
 ```
 
-The ignored snapshot is written to `target/visual-dev3/moonmark-ui.png`. Run `pwsh -File tools/visual_snapshots.ps1` after a Debug build and fixture generation to capture empty/prose/headings/tables/code/images/narrow/wide cases. Optional process variables `MOONMARK_SNAPSHOT_NAME`, `MOONMARK_SNAPSHOT_WIDTH`, `MOONMARK_SNAPSHOT_HEIGHT`, and `MOONMARK_SNAPSHOT_SCROLL` select the filename, client size, and vertical offset. `MOONMARK_SNAPSHOT_MENU=1` captures the real menu, and `MOONMARK_SNAPSHOT_SELECTION=1` selects the native document before capture. Smoke sessions put QSettings in project-local `target/native-settings`, not the user's application settings. It supplements rather than replaces physical taskbar, Alt+Tab, DPI, and multi-monitor checks.
+The ignored snapshot is written to `target/visual-dev4/moonmark-ui.png`. Run `pwsh -File tools/visual_snapshots.ps1` after a Debug build and fixture generation to capture empty/prose/headings/tables/code/images/narrow/wide, sidebar, menu, selection, and 80/100/125/150% zoom cases. Optional process variables `MOONMARK_SNAPSHOT_NAME`, `MOONMARK_SNAPSHOT_WIDTH`, `MOONMARK_SNAPSHOT_HEIGHT`, and `MOONMARK_SNAPSHOT_SCROLL` select the filename, client size, and vertical offset. `MOONMARK_SNAPSHOT_ZOOM` sets actual document zoom; `MOONMARK_SNAPSHOT_NO_SIDEBAR=1` collapses navigation. `MOONMARK_SNAPSHOT_MENU=1` captures the real menu, and `MOONMARK_SNAPSHOT_SELECTION=1` selects the native document before capture. Smoke sessions put QSettings in project-local `target/native-settings`, not the user's application settings. It supplements rather than replaces physical taskbar, Alt+Tab, DPI, and multi-monitor checks.
 
 ## Linux
 

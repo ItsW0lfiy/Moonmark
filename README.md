@@ -4,7 +4,7 @@
 
 Moonmark is a Windows-first, viewer-first Markdown application. It is one native process built with Rust, C++20, Qt 6 Widgets, and QTextDocument. Linux is the secondary desktop target; Android remains later work. Moonmark contains no browser engine, web frontend, local server, CLR, JVM, or Node.js runtime.
 
-Current development milestone: `0.1.0-dev.3`.
+Current development milestone: `0.1.0-dev.4`.
 
 ## Architecture
 
@@ -19,7 +19,7 @@ Markdown source
 
 Rust owns file loading, Comrak parsing, semantic/presentation models, syntax classification, image policy/decoding/cache, diagnostics, and framework-neutral window state. C++ owns the Qt widget shell, native QTextDocument construction, selection/clipboard interaction, document layout, and Windows presentation integration. The boundary transfers UTF-8 JSON, IDs, owned byte buffers, counters, and function pointers; it does not use a second process or network IPC.
 
-The `0.1.0-dev.3` New Moon redesign uses one quiet 40px titlebar with the embedded symbol, left-aligned filename, Open/zoom, secondary-actions menu, and native caption controls. The separate command strip is gone. Broad document tables use subtle horizontal separators rather than cell grids, code remains one graphite surface, and quotes use narrow neutral markers. Syntax highlighting remains the only document-color exception and avoids blue, cyan, teal, navy, and blue-gray.
+The `0.1.0-dev.4` New Moon presentation uses a collapsible file-first sidebar with Open/Reload and a native heading outline, a quiet breadcrumb header with Windows captions, and a broad document canvas. Tables have graphite headers and restrained horizontal/vertical separators; inline code has subtle graphite backgrounds; fences remain one coherent native frame. True percentage zoom scales native document layout while retaining selection and decoded images. Syntax colors remain restrained and non-blue.
 
 Moonmark is file-oriented rather than vault-oriented: it reads an ordinary Markdown file and releases the read handle. Relative images resolve from that document; valid parent, absolute, and `file:///` paths are allowed after canonicalization. Remote images remain disabled.
 

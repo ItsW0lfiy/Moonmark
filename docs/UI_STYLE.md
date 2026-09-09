@@ -1,27 +1,32 @@
-# UI style — New Moon, 0.1.0-dev.3
+# UI style — New Moon, 0.1.0-dev.4
 
-Moonmark is document-first: space, alignment, and typography carry hierarchy before borders. Chrome is achromatic black/graphite/silver. Syntax colors and the restrained red close hover are the only deliberate exceptions; neither introduces blue/cyan/teal.
+Moonmark translates the approved lunar concept into native Windows controls: a near-black canvas, graphite navigation/header layers, silver text, restrained separators, and broad document width. It does not copy the illustration's macOS captions, decorative lunar scenery, or nonfunctional navigation.
 
-## Window and commands
+## Shell and navigation
 
-One 40-logical-pixel titlebar replaces dev.2's 46px titlebar plus 42px command strip. The embedded icon is shown at 18px, followed by a left-aligned eliding filename. The remaining title area is draggable. Open and an unboxed zoom group appear when a document is open. The ellipsis menu keeps Reload, Reset zoom, Fullscreen, and Diagnostics discoverable; Ctrl+O, F5, F11/Escape, and F12 remain available.
+The 236px collapsible sidebar contains real Open/Reload actions, the current filename, and a heading outline supplied by Moonmark's existing presentation model. Outline entries navigate native document anchors by mouse or keyboard. There is no vault, folder browser, import requirement, Starred, or Archive. The sidebar collapses automatically below 1000px window width unless the user explicitly toggles it, and hides during F11. The 48px native titlebar retains Windows caption controls, a sidebar toggle, parent-directory/filename breadcrumb, compact zoom, and the secondary-actions menu. Open and the embedded symbol return to the header when the sidebar is hidden.
 
-Caption controls have 44×40px hit targets, native painted symbols, quiet resting surfaces, hover/pressed feedback, and visible keyboard focus. The close hover is muted red. The compact empty state uses a 32px embedded symbol, small wordmark, drag/drop hint, Open action, and Ctrl+O hint. No large landing-page logo or permanent footer remains.
+The empty state is a compact “Ready to read” prompt with Open and drag/drop guidance. Normal viewing has no permanent profiler/footer; F12 retains diagnostics. Native captions, drag, system menu, file dialog, and watcher behavior are preserved.
 
-## Document rhythm
+## Document presentation
 
-The canvas uses available desktop width with responsive side margins from 20 to 48px, not a fixed article-width limit. The default body is 12.75pt with 150% native line height. Heading scales remain distinct and application-sized. Lists use hanging markers and explicit tab stops; task glyphs remain integrated with native text.
+- Broad responsive canvas, no article-width cap; 20–48px side padding at 100%.
+- Body: 12.75pt, 150% line height. H1/H2 use 2.05/1.60 scale; H3–H6 remain distinct. Native heading-level metadata is retained.
+- Tables: 1px outer border and horizontal separators, weaker 1px vertical separators, graphite header, 8px vertical / 14px horizontal cell padding, 11.75pt text and native alignment. Purely numeric columns in mixed tables reserve their content width instead of consuming surplus desktop space.
+- Inline code: compact monospace with a neutral graphite background, including inside tables. Qt's native character background has no independent CSS-like padding/radius; no artificial characters or custom text objects are inserted to simulate capsules.
+- Fences: one continuous graphite QTextFrame, subtle border, 14px padding, small neutral language metadata, actual separator, Copy, grouped warm syntax spans, and preserved whitespace. Square corners remain an explicit native limitation, not a simulated rounded overlay. Long lines use the viewport's horizontal scrollbar.
+- Quotes: narrow neutral markers, muted native text, no filled card. Lists/tasks retain compact hanging markers; rules stay understated. Images remain integrated native document resources, not UI cards.
 
-Tables have no outer or vertical grid and no filled cell cards. Header weight and subtle horizontal rules provide structure. Native cell padding is 6px vertically and up to 12px horizontally, with 125% line height. Comrak column alignment survives the framework-neutral model. Inline code in tables is plain monospace without a background.
+## Zoom
 
-Code stays in one borderless graphite QTextFrame with 14px padding, a small neutral language label, lightweight Copy link, real separator, syntax spans, and preserved source whitespace. Structural paragraphs around native frames have minimal height; they no longer create extra body-line gaps. Square corners are intentional rather than simulated rounding. Long lines retain the viewport's horizontal scrollbar.
+The percentage is actual native layout scaling, not a transform. It scales explicit fonts, paragraph/list spacing, tabs, code-frame padding, table-cell padding and numeric widths, and loaded image geometry from immutable 100% presentation metrics. Relative line heights and thin rule/border formats stay unchanged. Selection and a top-visible text anchor are retained; the QTextDocument is not replaced.
 
-Quotes use muted text and a 2px neutral marker painted alongside Qt's native blocks. The quote text itself is never custom-painted. No rectangular quote fill remains. Rules are 1px neutral dividers. Inline code outside tables has a subdued graphite background. Image errors/loading states use a restrained left marker and text rather than a bordered card.
+Use minus/plus, the percentage menu (80/100/125/150/200), Ctrl+wheel, Ctrl+plus/minus, or Ctrl+0 to reset. Zoom persists when a document reloads. No parsing, semantic/presentation regeneration, or mass image decode is associated with zoom.
 
 ## States and accessibility
 
-Qt Fusion plus a neutral QPalette overrides accent, links, selection, and control states. Sparse widget styling supplies hover/focus treatments. Scrollbars retain 12px tracks, subdued resting handles, and clearer hover contrast. F12 diagnostics remain secondary. Native file dialogs intentionally retain the operating system's UI.
+Neutral Fusion palette roles and centralized styling cover selection, links, focus, hover, menu, tree navigation, and 12px scrollbars. Warm syntax colors and the restrained red close hover are the only deliberate UI/document exceptions; neither uses blue/cyan/teal. Original image content and the approved icon are not recolored. Native dialogs remain OS-owned.
 
-QTextDocument owns layout, selection, and accessibility. Tests exercise whole-document Ctrl+A/Ctrl+C, code Copy, table formats/alignment, neutral palette roles, and the Qt accessible-text interface. This is not a substitute for physical UI Automation/screen-reader or mixed-DPI validation.
+Qt retains whole-document selection, clipboard, text layout and accessibility. The outline uses a native tree with accessible labels and keyboard activation. Automated text-interface checks do not replace screen-reader/UI Automation or physical mixed-DPI testing.
 
-See [dev.3 validation](DEV3_VALIDATION.md) for screenshot findings, commands, results, and remaining checks.
+See [dev.4 validation](DEV4_VALIDATION.md) for actual screenshot review, measurements, and limitations.

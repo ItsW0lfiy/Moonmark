@@ -55,7 +55,7 @@ No tracked files were deleted.
 | NEXT_STEPS.md | User visual review and physical Windows validation before new features |
 | docs/DEV3_VALIDATION.md (new) | This report |
 
-AGENTS.md, build.rs, native ABI headers, image pipeline code, syntax libraries/palette, branding source assets, icon resources, dependencies, and framework choice were not changed.
+build.rs, native ABI headers, image pipeline code, syntax libraries/palette, branding source assets, icon resources, dependencies, and framework choice were not changed.
 
 Ignored outputs were generated only in project-local `target/` and `fixtures/generated/`: builds, screenshots, smoke settings, test scratch files, and deterministic stress images/Markdown. No private documents were used. No intentional source/configuration edits, installations, or global configuration changes were made outside D:\Projects\Moonmark. Ordinary tool-managed caches and OS activity were not audited. Clipboard smoke checks restore the prior MIME data.
 
