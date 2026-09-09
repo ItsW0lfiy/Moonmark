@@ -494,11 +494,13 @@ public:
         QElapsedTimer profile;
         profile.start();
         setUpdatesEnabled(false);
+        document()->setLayoutEnabled(false);
         zoom_layout_.apply(percent);
         const auto formats_us = profile.nsecsElapsed() / 1000;
         applyDocumentWidth();
         resizeLoadedImages();
         const auto images_us = profile.nsecsElapsed() / 1000;
+        document()->setLayoutEnabled(true);
         setTextCursor(selection);
         verticalScrollBar()->setValue(at_top ? 0 : verticalScrollBar()->value() +
                                         cursorRect(anchor).top() - anchor_y);
@@ -1307,6 +1309,7 @@ private:
             if (result.id == 0) {
                 break;
             }
+            if (!received) document()->setLayoutEnabled(false);
             received = true;
             ++count;
             const auto error = fromBuffer(result.error);
@@ -1347,6 +1350,7 @@ private:
             geometry_us += (profile.nsecsElapsed() - geometry_start) / 1000;
         }
         if (received) {
+            document()->setLayoutEnabled(true);
             viewport()->update();
             if (qEnvironmentVariableIsSet("MOONMARK_PROFILE"))
                 std::fprintf(stdout, "IMAGE_DELIVERY results=%d copy_us=%lld geometry_us=%lld total_us=%lld\n",
@@ -1376,8 +1380,10 @@ private:
             const double scale = occurrence.natural_width > 0
                                      ? static_cast<double>(width) / occurrence.natural_width
                                      : 1.0;
+            const auto height = std::max(1, static_cast<int>(occurrence.natural_height * scale));
+            if (format.width() == width && format.height() == height) continue;
             format.setWidth(width);
-            format.setHeight(std::max(1, static_cast<int>(occurrence.natural_height * scale)));
+            format.setHeight(height);
             cursor.setCharFormat(format);
         }
     }

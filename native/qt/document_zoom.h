@@ -16,8 +16,8 @@ public:
     [[nodiscard]] bool matches(int percent) const;
 
 private:
-    struct Span { int position; int length; QTextCharFormat format; };
-    struct Block { int position; QTextBlockFormat format; QTextCharFormat character; };
+    struct Span { int position; int length; QTextCharFormat format; int format_index; };
+    struct Block { int position; QTextBlockFormat format; QTextCharFormat character; int format_index; int character_index; };
     struct Frame { QPointer<QTextFrame> frame; QTextFrameFormat format; };
     struct Cell { QTextTableCell cell; QTextTableCellFormat format; };
     void captureFrame(QTextFrame* frame);

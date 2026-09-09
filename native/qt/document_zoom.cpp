@@ -4,6 +4,7 @@
 #include <QTextCursor>
 #include <QElapsedTimer>
 #include <cstdio>
+#include <unordered_map>
 #include <cmath>
 
 namespace moonmark::qt {
@@ -32,11 +33,12 @@ void DocumentZoom::capture(QTextDocument* document) {
     frames_.clear();
     cells_.clear();
     for (auto block = document->begin(); block.isValid(); block = block.next()) {
-        blocks_.push_back({block.position(), block.blockFormat(), block.charFormat()});
+        blocks_.push_back({block.position(), block.blockFormat(), block.charFormat(),
+                           block.blockFormatIndex(), block.charFormatIndex()});
         for (auto it = block.begin(); !it.atEnd(); ++it) {
             const auto fragment = it.fragment();
             if (!fragment.charFormat().isImageFormat())
-                spans_.push_back({fragment.position(), fragment.length(), fragment.charFormat()});
+                spans_.push_back({fragment.position(), fragment.length(), fragment.charFormat(), fragment.charFormatIndex()});
         }
     }
     for (auto* frame : document->rootFrame()->childFrames()) captureFrame(frame);
@@ -64,20 +66,30 @@ void DocumentZoom::apply(int percent) {
     document_->setDefaultFont(font);
     QTextCursor cursor(document_);
     cursor.beginEditBlock();
+    std::unordered_map<int, QTextCharFormat> characters;
+    std::unordered_map<int, QTextBlockFormat> blocks;
+    const auto character = [&](int index, const QTextCharFormat& baseline) -> const QTextCharFormat& {
+        auto [it, inserted] = characters.try_emplace(index);
+        if (inserted) it->second = scaled(baseline, ratio);
+        return it->second;
+    };
     for (const auto& block : blocks_) {
         cursor.setPosition(block.position);
-        auto format = scaled(block.format, ratio);
-        auto tabs = format.tabPositions();
-        for (auto& tab : tabs) tab.position *= ratio;
-        format.setTabPositions(tabs);
+        auto [it, inserted] = blocks.try_emplace(block.format_index);
+        if (inserted) {
+            it->second = scaled(block.format, ratio);
+            auto tabs = it->second.tabPositions();
+            for (auto& tab : tabs) tab.position *= ratio;
+            it->second.setTabPositions(tabs);
+        }
         // Percentage line heights and 1px presentation rules deliberately stay unchanged.
-        cursor.setBlockFormat(format);
-        cursor.setBlockCharFormat(scaled(block.character, ratio));
+        cursor.setBlockFormat(it->second);
+        cursor.setBlockCharFormat(character(block.character_index, block.character));
     }
     for (const auto& span : spans_) {
         cursor.setPosition(span.position);
         cursor.setPosition(span.position + span.length, QTextCursor::KeepAnchor);
-        cursor.setCharFormat(scaled(span.format, ratio));
+        cursor.setCharFormat(character(span.format_index, span.format));
     }
     const auto text_us = timer.nsecsElapsed() / 1000;
     for (const auto& frame : frames_) {
