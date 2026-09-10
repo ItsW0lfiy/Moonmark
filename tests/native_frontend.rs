@@ -112,3 +112,38 @@ fn qt_frontend_smoke_matrix() {
     assert!(stdout.contains("watcher=ok"), "{stdout}");
     std::fs::remove_file(watcher_fixture).expect("remove watcher fixture");
 }
+
+#[test]
+fn qt_background_text_watcher_updates_only_its_session() {
+    let watcher_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("moonmark-native-tests");
+    std::fs::create_dir_all(&watcher_root).expect("create native test directory");
+    let active_fixture = watcher_root.join("active.md");
+    let background_fixture = watcher_root.join("background.txt");
+    std::fs::write(
+        &active_fixture,
+        "# Active fixture\n\nDo not reload this document.\n",
+    )
+    .expect("write active watcher fixture");
+    std::fs::write(&background_fixture, "Literal **background** text.\n")
+        .expect("write background watcher fixture");
+    let output = Command::new(env!("CARGO_BIN_EXE_moonmark"))
+        .arg("--smoke-multidoc-watcher")
+        .arg(&active_fixture)
+        .arg(&background_fixture)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("launch Moonmark background watcher smoke test");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Moonmark background watcher smoke failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("multidoc_watcher=ok"), "{stdout}");
+    assert!(stdout.contains("active=stable"), "{stdout}");
+    assert!(stdout.contains("background_parse_delta=0"), "{stdout}");
+    std::fs::remove_file(active_fixture).expect("remove active watcher fixture");
+    std::fs::remove_file(background_fixture).expect("remove background watcher fixture");
+}

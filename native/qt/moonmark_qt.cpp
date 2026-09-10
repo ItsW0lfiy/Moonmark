@@ -1664,6 +1664,52 @@ public:
     }
 
     void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("multidoc-watcher")) {
+            QTimer::singleShot(250, this, [this] {
+                if (documents_.size() < 2) {
+                    std::fprintf(stdout, "MOONMARK_SMOKE multidoc_watcher=failed reason=document_count\n");
+                    std::fflush(stdout);
+                    QCoreApplication::exit(17);
+                    return;
+                }
+                activateDocument(0);
+                auto* active = documents_.front().get();
+                auto* background = documents_[1].get();
+                const auto active_before = api_->backend_counters(active->backend);
+                const auto background_before = api_->backend_counters(background->backend);
+                const auto active_path = active->canonical_path;
+                QFile file(background->canonical_path);
+                const bool appended = file.open(QIODevice::Append | QIODevice::Text) &&
+                                      file.write("\nMoonmark background watcher update.\n") > 0;
+                file.close();
+                QTimer::singleShot(700, this,
+                    [this, active, background, active_before, background_before, active_path, appended] {
+                        const auto active_after = api_->backend_counters(active->backend);
+                        const auto background_after = api_->backend_counters(background->backend);
+                        const bool active_stable = active_ == active && current_path_ == active_path &&
+                            active_after.load_count == active_before.load_count &&
+                            active_after.parse_count == active_before.parse_count &&
+                            active_after.image_request_count == active_before.image_request_count;
+                        const bool background_loaded =
+                            background_after.load_count == background_before.load_count + 1;
+                        const bool background_parse_stable = background->view->isPlainText() &&
+                            background_after.parse_count == background_before.parse_count;
+                        const bool content_updated = background->view->plainText().contains(
+                            QStringLiteral("Moonmark background watcher update."));
+                        const bool result = appended && active_stable && background_loaded &&
+                            background_parse_stable && content_updated;
+                        std::fprintf(stdout,
+                            "MOONMARK_SMOKE multidoc_watcher=%s active=%s background_load_delta=%lld background_parse_delta=%lld content=%s\n",
+                            result ? "ok" : "failed", active_stable ? "stable" : "changed",
+                            static_cast<long long>(background_after.load_count - background_before.load_count),
+                            static_cast<long long>(background_after.parse_count - background_before.parse_count),
+                            content_updated ? "updated" : "stale");
+                        std::fflush(stdout);
+                        QCoreApplication::exit(result ? 0 : 17);
+                    });
+            });
+            return;
+        }
         if (mode == QStringLiteral("motion")) {
             QTimer::singleShot(300, this, [this] {
                 const auto before = api_->backend_counters(backend_);
@@ -2699,6 +2745,8 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
             smoke_mode = QStringLiteral("plaintext");
         } else if (argument == QStringLiteral("--smoke-motion")) {
             smoke_mode = QStringLiteral("motion");
+        } else if (argument == QStringLiteral("--smoke-multidoc-watcher")) {
+            smoke_mode = QStringLiteral("multidoc-watcher");
         } else if (!argument.startsWith(QLatin1Char('-')) && QFileInfo::exists(argument)) {
             document_paths.push_back(argument);
         }
