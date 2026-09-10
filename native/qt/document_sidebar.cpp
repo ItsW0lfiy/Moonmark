@@ -3,10 +3,12 @@
 
 #include <QApplication>
 #include <QBoxLayout>
+#include <QHeaderView>
 #include <QJsonObject>
 #include <QLabel>
 #include <QPushButton>
 #include <QTreeWidget>
+#include <algorithm>
 #include <vector>
 
 namespace moonmark::qt {
@@ -41,19 +43,48 @@ DocumentSidebar::DocumentSidebar(QWidget* parent) : QWidget(parent) {
     connect(reload_, &QPushButton::clicked, this, [this] { if (reload) reload(); });
     layout->addWidget(reload_);
     layout->addSpacing(28);
-    auto* label = new QLabel(QStringLiteral("CURRENT DOCUMENT"));
+    auto* label = new QLabel(QStringLiteral("OPEN DOCUMENTS"));
     label->setObjectName(QStringLiteral("sidebarSection"));
     layout->addWidget(label);
-    filename_ = new QLabel(QStringLiteral("No document open"));
-    filename_->setObjectName(QStringLiteral("sidebarFilename"));
-    filename_->setWordWrap(true);
-    filename_->setTextFormat(Qt::PlainText);
-    layout->addWidget(filename_);
+    documents_ = new QTreeWidget;
+    documents_->setObjectName(QStringLiteral("openDocuments"));
+    documents_->setAccessibleName(QStringLiteral("Open documents"));
+    documents_->setHeaderHidden(true);
+    documents_->setColumnCount(2);
+    documents_->setRootIsDecorated(false);
+    documents_->setIndentation(0);
+    documents_->setUniformRowHeights(true);
+    documents_->setTextElideMode(Qt::ElideMiddle);
+    documents_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    documents_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    documents_->setFrameShape(QFrame::NoFrame);
+    documents_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    documents_->header()->setStretchLastSection(false);
+    documents_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    documents_->header()->setSectionResizeMode(1, QHeaderView::Fixed);
+    documents_->setColumnWidth(1, 28);
+    connect(documents_, &QTreeWidget::itemClicked, this,
+            [this](QTreeWidgetItem* item, int column) {
+        if (!item) return;
+        const int index = item->data(0, Qt::UserRole).toInt();
+        if (column == 1) {
+            if (close_document) close_document(index);
+        } else if (activate_document) {
+            activate_document(index);
+        }
+    });
+    connect(documents_, &QTreeWidget::itemActivated, this,
+            [this](QTreeWidgetItem* item, int) {
+        if (activate_document && item)
+            activate_document(item->data(0, Qt::UserRole).toInt());
+    });
+    layout->addWidget(documents_);
     layout->addSpacing(20);
     auto* outline_label = new QLabel(QStringLiteral("OUTLINE"));
     outline_label->setObjectName(QStringLiteral("sidebarSection"));
     layout->addWidget(outline_label);
     outline_ = new QTreeWidget;
+    outline_->setObjectName(QStringLiteral("documentOutline"));
     outline_->setAccessibleName(QStringLiteral("Document heading outline"));
     outline_->setHeaderHidden(true);
     outline_->setRootIsDecorated(false);
@@ -71,9 +102,24 @@ DocumentSidebar::DocumentSidebar(QWidget* parent) : QWidget(parent) {
     layout->addWidget(outline_, 1);
 }
 
-void DocumentSidebar::setDocument(const QString& filename, const QJsonArray& outline) {
-    filename_->setText(filename);
-    reload_->setEnabled(true);
+void DocumentSidebar::setDocuments(const QStringList& filenames, int active_index) {
+    documents_->clear();
+    for (int index = 0; index < filenames.size(); ++index) {
+        auto* item = new QTreeWidgetItem(documents_);
+        item->setText(0, filenames.at(index));
+        item->setText(1, QStringLiteral("×"));
+        item->setTextAlignment(1, Qt::AlignCenter);
+        item->setToolTip(0, filenames.at(index));
+        item->setToolTip(1, QStringLiteral("Close document"));
+        item->setData(0, Qt::UserRole, index);
+        if (index == active_index) documents_->setCurrentItem(item);
+    }
+    const int rows = std::clamp(static_cast<int>(filenames.size()), 1, 4);
+    documents_->setFixedHeight(rows * 34 + 4);
+    reload_->setEnabled(active_index >= 0);
+}
+
+void DocumentSidebar::setOutline(const QJsonArray& outline) {
     outline_->clear();
     std::vector<std::pair<int, QTreeWidgetItem*>> parents;
     for (const auto& value : outline) {

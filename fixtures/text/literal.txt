@@ -1,0 +1,12 @@
+# This remains literal text
+
+Markdown-looking content must not render:
+* item
+**bold** and _italic_
+`inline code`
+![image](../images/mixed/pixel.png)
+
+	Tabbed line
+Unicode: 月 · Ελληνικά · 日本語 · café
+Spaces are preserved before this marker:    |
+Long line: 0123456789 abcdefghijklmnopqrstuvwxyz 0123456789 abcdefghijklmnopqrstuvwxyz 0123456789 abcdefghijklmnopqrstuvwxyz 0123456789 abcdefghijklmnopqrstuvwxyz 0123456789 abcdefghijklmnopqrstuvwxyz 0123456789 abcdefghijklmnopqrstuvwxyz

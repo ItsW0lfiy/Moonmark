@@ -54,6 +54,31 @@ impl Backend {
         self.revision = self.revision.saturating_add(1);
         self.image_pipeline.reset_requests();
 
+        if canonical
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
+        {
+            self.image_requests.clear();
+            return PresentationDocument::plain_text(
+                canonical
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Moonmark")
+                    .to_owned(),
+                source,
+                PresentationMetrics {
+                    revision: self.revision,
+                    source_bytes: std::fs::metadata(&canonical)
+                        .map_or(0, |metadata| metadata.len()),
+                    read_us,
+                    parse_count: self.parse_count,
+                    load_count: self.load_count,
+                    ..PresentationMetrics::default()
+                },
+            );
+        }
+
         let parse_started = Instant::now();
         let model = parse(&source);
         let parse_us = elapsed_us(parse_started);
@@ -113,6 +138,33 @@ impl Backend {
     }
     pub fn image_request_count(&self) -> u64 {
         self.image_pipeline.request_count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Backend;
+
+    #[test]
+    fn text_documents_bypass_markdown_and_preserve_source() {
+        let directory =
+            std::env::temp_dir().join(format!("moonmark-plain-text-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create fixture directory");
+        let path = directory.join("literal.txt");
+        let source = "# Not a heading\n\t* not a list *\nUnicode: 月\ntrailing  \n";
+        std::fs::write(&path, source).expect("write fixture");
+
+        let mut backend = Backend::default();
+        let presentation = backend.open_document(path.to_str().expect("UTF-8 path"));
+
+        assert_eq!(presentation.source_type, "plainText");
+        assert_eq!(presentation.literal_text, source);
+        assert!(presentation.commands.is_empty());
+        assert!(presentation.toc.is_empty());
+        assert_eq!(backend.parse_count(), 0);
+        assert_eq!(backend.load_count(), 1);
+
+        std::fs::remove_dir_all(directory).expect("remove fixture directory");
     }
 }
 

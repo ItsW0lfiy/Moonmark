@@ -4,6 +4,8 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct PresentationDocument {
     pub title: String,
+    pub source_type: String,
+    pub literal_text: String,
     pub error: String,
     pub commands: Vec<PresentationCommand>,
     pub image_ids: Vec<u32>,
@@ -16,11 +18,27 @@ impl PresentationDocument {
     pub fn error(message: String) -> Self {
         Self {
             title: "Moonmark".into(),
+            source_type: "error".into(),
+            literal_text: String::new(),
             error: message,
             commands: Vec::new(),
             image_ids: Vec::new(),
             toc: Vec::new(),
             metrics: PresentationMetrics::default(),
+            settings: PresentationSettings::default(),
+        }
+    }
+
+    pub fn plain_text(title: String, source: String, metrics: PresentationMetrics) -> Self {
+        Self {
+            title,
+            source_type: "plainText".into(),
+            literal_text: source,
+            error: String::new(),
+            commands: Vec::new(),
+            image_ids: Vec::new(),
+            toc: Vec::new(),
+            metrics,
             settings: PresentationSettings::default(),
         }
     }

@@ -13,6 +13,7 @@
 #include <QColor>
 #include <QDesktopServices>
 #include <QDir>
+#include <QEasingCurve>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
@@ -58,8 +59,10 @@
 #include <QTextTable>
 #include <QTextTableCell>
 #include <QTextTableFormat>
+#include <QTextOption>
 #include <QTimer>
 #include <QUrl>
+#include <QVariantAnimation>
 #include <QWindow>
 #include <QWheelEvent>
 #include <QTreeWidget>
@@ -71,6 +74,7 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -280,6 +284,12 @@ private:
 
 class DocumentView final : public QTextEdit {
 public:
+    struct InteractionState {
+        int scroll = 0;
+        int position = 0;
+        int anchor = 0;
+    };
+
     explicit DocumentView(const MoonmarkApiTable* api, void* backend, QWidget* parent = nullptr)
         : QTextEdit(parent), api_(api), backend_(backend) {
         setReadOnly(true);
@@ -300,6 +310,16 @@ public:
         QObject::connect(&image_poll_, &QTimer::timeout, this, [this] { pollImages(); });
         QObject::connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
                          [this] { queueVisibleImages(); });
+        QObject::connect(verticalScrollBar(), &QScrollBar::sliderPressed, this,
+                         [this] { cancelScrollMotion(); });
+
+        scroll_animation_.setEasingCurve(QEasingCurve::OutCubic);
+        QObject::connect(&scroll_animation_, &QVariantAnimation::valueChanged, this,
+                         [this](const QVariant& value) {
+            scroll_motion_write_ = true;
+            verticalScrollBar()->setValue(value.toInt());
+            scroll_motion_write_ = false;
+        });
 
         autoscroll_.setInterval(16);
         QObject::connect(&autoscroll_, &QTimer::timeout, this, [this] { autoScrollTick(); });
@@ -318,6 +338,10 @@ public:
         title_ = root.value("title").toString(QStringLiteral("Moonmark"));
         settings_ = root.value("settings").toObject();
         metrics_ = root.value("metrics").toObject();
+        plain_text_ = root.value("sourceType").toString() == QStringLiteral("plainText");
+        setLineWrapMode(plain_text_ ? QTextEdit::NoWrap : QTextEdit::WidgetWidth);
+        setAccessibleName(plain_text_ ? QStringLiteral("Moonmark plain text document")
+                                      : QStringLiteral("Moonmark Markdown document"));
 
         auto* next = new QTextDocument(this);
         next->setDocumentMargin(0.0);
@@ -336,6 +360,14 @@ public:
             auto format = baseCharacterFormat();
             format.setForeground(QColor(colour::error));
             cursor.insertText(error, format);
+        } else if (plain_text_) {
+            auto block = bodyBlockFormat(145);
+            block.setTopMargin(0);
+            block.setBottomMargin(0);
+            cursor.setBlockFormat(block);
+            auto format = baseCharacterFormat();
+            format.setFontFamilies({QStringLiteral("Cascadia Mono"), QStringLiteral("Consolas")});
+            cursor.insertText(root.value("literalText").toString(), format);
         } else {
             std::size_t index = 0;
             buildBlocks(cursor, index, -1, 0);
@@ -379,6 +411,19 @@ public:
                                               }));
     }
     [[nodiscard]] QString plainText() const { return document()->toPlainText(); }
+    [[nodiscard]] InteractionState interactionState() const {
+        return {verticalScrollBar()->value(), textCursor().position(), textCursor().anchor()};
+    }
+
+    void restoreInteractionState(const InteractionState& state) {
+        QTextCursor cursor(document());
+        const int limit = std::max(0, document()->characterCount() - 1);
+        cursor.setPosition(std::clamp(state.anchor, 0, limit));
+        cursor.setPosition(std::clamp(state.position, 0, limit), QTextCursor::KeepAnchor);
+        setTextCursor(cursor);
+        verticalScrollBar()->setValue(std::clamp(state.scroll, verticalScrollBar()->minimum(),
+                                                 verticalScrollBar()->maximum()));
+    }
     [[nodiscard]] bool testSelectionCopy() {
         auto* previous = snapshotClipboard();
         QKeyEvent select_event(QEvent::KeyPress, Qt::Key_A, Qt::ControlModifier);
@@ -529,7 +574,30 @@ public:
     }
 
     [[nodiscard]] int zoomPercent() const { return zoom_percent_; }
+    [[nodiscard]] bool isPlainText() const { return plain_text_; }
     std::function<void(int)> zoomChanged;
+
+    void navigateToAnchor(const QString& anchor, bool animate = true) {
+        QTextCursor target(document());
+        bool found = false;
+        for (auto block = document()->begin(); block.isValid() && !found; block = block.next()) {
+            for (auto fragment = block.begin(); !fragment.atEnd(); ++fragment) {
+                const auto part = fragment.fragment();
+                if (part.charFormat().anchorNames().contains(anchor)) {
+                    target.setPosition(part.position());
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if (!found) return;
+        const auto bounds = document()->documentLayout()->blockBoundingRect(target.block());
+        const int breathing_room = static_cast<int>(22.0 * zoom_percent_ / 100.0);
+        const int destination = std::clamp(static_cast<int>(std::round(bounds.top())) - breathing_room,
+                                           verticalScrollBar()->minimum(),
+                                           verticalScrollBar()->maximum());
+        animateScrollTo(destination, animate ? 210 : 0);
+    }
 
     bool testZoom() {
         const auto before = api_->backend_counters(backend_);
@@ -669,6 +737,7 @@ protected:
     }
 
     void mousePressEvent(QMouseEvent* event) override {
+        cancelScrollMotion();
         if (event->button() == Qt::MiddleButton) {
             autoscroll_active_ = !autoscroll_active_;
             autoscroll_anchor_ = event->position();
@@ -723,7 +792,7 @@ protected:
                 QGuiApplication::clipboard()->setText(code_sources_[static_cast<std::size_t>(index)]);
             }
         } else if (anchor.startsWith(QLatin1Char('#'))) {
-            scrollToAnchor(QUrl::fromPercentEncoding(anchor.sliced(1).toUtf8()));
+            navigateToAnchor(QUrl::fromPercentEncoding(anchor.sliced(1).toUtf8()));
         } else {
             const QUrl url(anchor);
             if (url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https") ||
@@ -739,10 +808,26 @@ protected:
             event->accept();
             return;
         }
+        if (!event->pixelDelta().isNull()) {
+            cancelScrollMotion();
+            QTextEdit::wheelEvent(event);
+            return;
+        }
+        if (event->angleDelta().y() != 0) {
+            const int notches = event->angleDelta().y() / 120;
+            const int baseline = scroll_animation_.state() == QAbstractAnimation::Running
+                                   ? scroll_animation_.endValue().toInt()
+                                   : verticalScrollBar()->value();
+            const int destination = baseline - notches * verticalScrollBar()->singleStep() * 4;
+            animateScrollTo(destination, 135);
+            event->accept();
+            return;
+        }
         QTextEdit::wheelEvent(event);
     }
 
     void keyPressEvent(QKeyEvent* event) override {
+        cancelScrollMotion();
         if (event->modifiers().testFlag(Qt::ControlModifier)) {
             const int key = event->key();
             if (key == Qt::Key_Plus || key == Qt::Key_Equal || key == Qt::Key_Minus || key == Qt::Key_0) {
@@ -772,6 +857,29 @@ protected:
     }
 
 private:
+    void cancelScrollMotion() {
+        if (!scroll_motion_write_ && scroll_animation_.state() == QAbstractAnimation::Running)
+            scroll_animation_.stop();
+    }
+
+    void animateScrollTo(int destination, int duration_ms) {
+        auto* bar = verticalScrollBar();
+        destination = std::clamp(destination, bar->minimum(), bar->maximum());
+        if (duration_ms <= 0 || qEnvironmentVariable("MOONMARK_REDUCED_MOTION") == QStringLiteral("1")) {
+            cancelScrollMotion();
+            bar->setValue(destination);
+            return;
+        }
+        const int start = bar->value();
+        if (start == destination) return;
+        scroll_animation_.stop();
+        scroll_animation_.setStartValue(start);
+        scroll_animation_.setEndValue(destination);
+        const int distance = std::abs(destination - start);
+        scroll_animation_.setDuration(std::clamp(duration_ms * distance / 420, 90, duration_ms));
+        scroll_animation_.start();
+    }
+
     void buildBlocks(QTextCursor& cursor, std::size_t& index, int stop_kind, int depth) {
         while (index < commands_.size()) {
             const auto& command = commands_[index];
@@ -1443,6 +1551,8 @@ private:
     QString title_ = QStringLiteral("Moonmark");
     QTimer image_poll_;
     QTimer autoscroll_;
+    QVariantAnimation scroll_animation_;
+    bool scroll_motion_write_ = false;
     bool autoscroll_active_ = false;
     QPointF autoscroll_anchor_;
     QPointF autoscroll_pointer_;
@@ -1451,15 +1561,24 @@ private:
     QPoint press_point_;
     bool selection_drag_ = false;
     int zoom_percent_ = 100;
+    bool plain_text_ = false;
     moonmark::qt::DocumentZoom zoom_layout_;
     quint64 construction_us_ = 0;
     quint64 document_construction_count_ = 0;
 };
 
+struct OpenDocumentSession {
+    QString canonical_path;
+    void* backend = nullptr;
+    DocumentView* view = nullptr;
+    QJsonArray outline;
+    QFileSystemWatcher* watcher = nullptr;
+    QTimer* reload_delay = nullptr;
+};
+
 class MoonmarkWindow final : public QWidget {
 public:
     explicit MoonmarkWindow(const MoonmarkApiTable* api) : api_(api) {
-        backend_ = api_->backend_new();
         window_state_ = api_->window_state_new();
         setObjectName(QStringLiteral("moonmarkWindow"));
         setWindowTitle(QStringLiteral("Moonmark"));
@@ -1471,13 +1590,17 @@ public:
         resize(1280, 820);
         setAcceptDrops(true);
         buildUi();
-        setupWatcher();
         updateStatus();
     }
 
     ~MoonmarkWindow() override {
+        for (auto& session : documents_) {
+            delete session->view;
+            delete session->watcher;
+            delete session->reload_delay;
+            api_->backend_free(session->backend);
+        }
         api_->window_state_free(window_state_);
-        api_->backend_free(backend_);
     }
 
     bool openDocument(const QString& path) {
@@ -1485,37 +1608,134 @@ public:
         if (!file.exists()) {
             return false;
         }
-        const auto utf8 = file.canonicalFilePath().toUtf8();
-        const auto buffer = api_->open_document(backend_,
+        const auto canonical_path = file.canonicalFilePath();
+        if (canonical_path.isEmpty()) return false;
+        for (int index = 0; index < static_cast<int>(documents_.size()); ++index) {
+            if (QString::compare(documents_[static_cast<std::size_t>(index)]->canonical_path,
+                                 canonical_path,
+#ifdef _WIN32
+                                 Qt::CaseInsensitive
+#else
+                                 Qt::CaseSensitive
+#endif
+                                 ) == 0) {
+                activateDocument(index);
+                return true;
+            }
+        }
+
+        auto session = std::make_unique<OpenDocumentSession>();
+        session->canonical_path = canonical_path;
+        session->backend = api_->backend_new();
+        session->view = new DocumentView(api_, session->backend);
+        session->view->zoomChanged = [this, raw = session.get()](int percent) {
+            if (active_ == raw) zoom_label_->setText(QStringLiteral("%1%").arg(percent));
+        };
+        const auto utf8 = canonical_path.toUtf8();
+        const auto buffer = api_->open_document(session->backend,
                                                 reinterpret_cast<const std::uint8_t*>(utf8.constData()),
                                                 static_cast<std::size_t>(utf8.size()));
         const auto root = jsonFromBuffer(buffer);
         api_->buffer_free(buffer);
-        document_->load(root);
-        current_path_ = file.canonicalFilePath();
-        title_label_->setFullText(file.dir().dirName() + QStringLiteral("   /   ") + file.fileName());
-        sidebar_->setDocument(file.fileName(), root.value("toc").toArray());
-        title_label_->setToolTip(current_path_);
-        setWindowTitle(QStringLiteral("%1 — Moonmark").arg(file.fileName()));
-        stack_->setCurrentWidget(document_);
-        document_->setFocus(Qt::OtherFocusReason);
-        reload_action_->setEnabled(true);
-        if (!fullscreen_) {
-            document_actions_->show();
-        }
+        session->view->load(root);
+        session->outline = root.value("toc").toArray();
+        session->watcher = new QFileSystemWatcher(this);
+        session->watcher->addPath(canonical_path);
+        session->reload_delay = new QTimer(this);
+        session->reload_delay->setSingleShot(true);
+        session->reload_delay->setInterval(180);
+        auto* raw = session.get();
+        QObject::connect(session->watcher, &QFileSystemWatcher::fileChanged, this,
+                         [raw](const QString&) { raw->reload_delay->start(); });
+        QObject::connect(session->reload_delay, &QTimer::timeout, this,
+                         [this, raw] { reloadSession(raw); });
+        stack_->addWidget(session->view);
+        documents_.push_back(std::move(session));
+        activateDocument(static_cast<int>(documents_.size()) - 1);
         QSettings settings;
         settings.setValue(QStringLiteral("lastOpenDirectory"), file.absolutePath());
-        watchCurrentFile();
-        updateStatus();
         return root.value("error").toString().isEmpty();
     }
 
     void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("multidoc")) {
+            QTimer::singleShot(350, this, [this] {
+                bool ok = documents_.size() >= 2;
+                bool plain_present = false;
+                std::vector<MoonmarkCounters> counters;
+                std::vector<quint64> constructions;
+                for (const auto& session : documents_) {
+                    counters.push_back(api_->backend_counters(session->backend));
+                    constructions.push_back(session->view->constructionCount());
+                    plain_present |= session->view->isPlainText();
+                }
+                activateDocument(0);
+                document_->changeZoom(25);
+                document_->verticalScrollBar()->setValue(document_->verticalScrollBar()->maximum() / 3);
+                const auto retained = document_->interactionState();
+                const auto first_path = documents_.front()->canonical_path;
+                const auto count_before_duplicate = documents_.size();
+                openDocument(first_path);
+                const bool duplicate_ok = documents_.size() == count_before_duplicate &&
+                                          activeDocumentIndex() == 0;
+                ok &= duplicate_ok;
+                if (documents_.size() > 1) activateDocument(1);
+                activateDocument(0);
+                const bool state_retained = document_->zoomPercent() == 125 &&
+                                            document_->interactionState().scroll == retained.scroll;
+                ok &= state_retained;
+                bool counters_stable = true;
+                for (std::size_t index = 0; index < documents_.size(); ++index) {
+                    const auto after = api_->backend_counters(documents_[index]->backend);
+                    counters_stable &= after.parse_count == counters[index].parse_count &&
+                                       after.load_count == counters[index].load_count &&
+                                       after.image_request_count == counters[index].image_request_count &&
+                                       documents_[index]->view->constructionCount() == constructions[index];
+                }
+                ok &= counters_stable;
+                ok &= plain_present;
+                const auto original_count = documents_.size();
+                closeDocument(static_cast<int>(documents_.size()) - 1);
+                ok &= documents_.size() + 1 == original_count;
+                while (!documents_.empty()) closeDocument(0);
+                ok &= active_ == nullptr && stack_->currentIndex() == 0;
+                std::fprintf(stdout,
+                             "MOONMARK_SMOKE multidoc=%s duplicate=%s state=%s counters=%s plain_text=%s final=%s\n",
+                             ok ? "ok" : "failed",
+                             duplicate_ok ? "deduplicated" : "failed",
+                             state_retained ? "retained" : "failed",
+                             counters_stable ? "stable" : "changed",
+                             plain_present ? "present" : "missing",
+                             active_ == nullptr && stack_->currentIndex() == 0 ? "empty" : "failed");
+                std::fflush(stdout);
+                QCoreApplication::exit(ok ? 0 : 15);
+            });
+            return;
+        }
+        if (mode == QStringLiteral("plaintext")) {
+            QTimer::singleShot(250, this, [this] {
+                QFile source(current_path_);
+                const bool opened = source.open(QIODevice::ReadOnly);
+                const auto expected = opened ? QString::fromUtf8(source.readAll()) : QString{};
+                const auto counters = api_->backend_counters(backend_);
+                const bool ok = opened && document_->isPlainText() &&
+                                document_->plainText() == expected &&
+                                document_->discoveredImages() == 0 && counters.parse_count == 0;
+                std::fprintf(stdout,
+                             "MOONMARK_SMOKE plaintext=%s chars=%lld parse_count=%llu images=%d\n",
+                             ok ? "ok" : "failed", static_cast<long long>(expected.size()),
+                             static_cast<unsigned long long>(counters.parse_count),
+                             document_->discoveredImages());
+                std::fflush(stdout);
+                QCoreApplication::exit(ok ? 0 : 14);
+            });
+            return;
+        }
         if (mode == QStringLiteral("navigation")) {
             QTimer::singleShot(300, this, [this] {
                 const auto before = api_->backend_counters(backend_);
                 const auto constructions = document_->constructionCount();
-                auto* tree = sidebar_->findChild<QTreeWidget*>();
+                auto* tree = sidebar_->findChild<QTreeWidget*>(QStringLiteral("documentOutline"));
                 auto* item = tree->topLevelItem(tree->topLevelItemCount() - 1);
                 while (item && item->childCount() > 0) item = item->child(item->childCount() - 1);
                 bool ok = sidebar_->isVisible() && item != nullptr;
@@ -1837,6 +2057,19 @@ protected:
             event->accept();
             return;
         }
+        if (event->modifiers().testFlag(Qt::ControlModifier) && event->key() == Qt::Key_W && active_) {
+            closeDocument(activeDocumentIndex());
+            event->accept();
+            return;
+        }
+        if (event->modifiers().testFlag(Qt::ControlModifier) && event->key() == Qt::Key_Tab &&
+            documents_.size() > 1) {
+            const int direction = event->modifiers().testFlag(Qt::ShiftModifier) ? -1 : 1;
+            const int count = static_cast<int>(documents_.size());
+            activateDocument((activeDocumentIndex() + direction + count) % count);
+            event->accept();
+            return;
+        }
         if (event->key() == Qt::Key_F5) {
             reloadDocument();
             event->accept();
@@ -1858,12 +2091,11 @@ protected:
     }
 
     void dropEvent(QDropEvent* event) override {
+        bool opened = false;
         for (const auto& url : event->mimeData()->urls()) {
-            if (url.isLocalFile() && openDocument(url.toLocalFile())) {
-                event->acceptProposedAction();
-                return;
-            }
+            if (url.isLocalFile()) opened |= openDocument(url.toLocalFile());
         }
+        if (opened) event->acceptProposedAction();
     }
 
     void changeEvent(QEvent* event) override {
@@ -1911,7 +2143,22 @@ private:
     void updateSidebarVisibility() {
         if (sidebar_ == nullptr) return;
         const bool visible = !fullscreen_ && sidebar_requested_ && (sidebar_explicit_ || width() >= 1000);
-        sidebar_->setVisible(visible);
+        const bool reduced = qEnvironmentVariable("MOONMARK_REDUCED_MOTION") == QStringLiteral("1");
+        if (reduced || !isVisible()) {
+            sidebar_animation_.stop();
+            sidebar_->setFixedWidth(moonmark::style::metric::sidebar_width);
+            sidebar_->setVisible(visible);
+        } else if (visible != sidebar_->isVisible() ||
+                   sidebar_animation_.state() == QAbstractAnimation::Running) {
+            sidebar_animation_.stop();
+            sidebar_target_visible_ = visible;
+            if (visible) sidebar_->show();
+            sidebar_animation_.setStartValue(visible ? 0 : sidebar_->width());
+            sidebar_animation_.setEndValue(visible ? moonmark::style::metric::sidebar_width : 0);
+            sidebar_animation_.setDuration(visible ? 170 : 150);
+            sidebar_animation_.setEasingCurve(QEasingCurve::OutCubic);
+            sidebar_animation_.start();
+        }
         if (open_ != nullptr) open_->setVisible(!visible);
         if (title_symbol_ != nullptr) title_symbol_->setVisible(!visible);
     }
@@ -1921,12 +2168,22 @@ private:
         shell->setContentsMargins(0, 0, 0, 0);
         shell->setSpacing(0);
         sidebar_ = new moonmark::qt::DocumentSidebar;
+        QObject::connect(&sidebar_animation_, &QVariantAnimation::valueChanged, this,
+                         [this](const QVariant& width) { sidebar_->setFixedWidth(width.toInt()); });
+        QObject::connect(&sidebar_animation_, &QVariantAnimation::finished, this, [this] {
+            if (!sidebar_target_visible_) sidebar_->hide();
+            sidebar_->setFixedWidth(moonmark::style::metric::sidebar_width);
+        });
         sidebar_->open = [this] { chooseDocument(); };
         sidebar_->reload = [this] { reloadDocument(); };
         sidebar_->navigate = [this](const QString& anchor) {
-            document_->scrollToAnchor(anchor);
-            document_->setFocus(Qt::OtherFocusReason);
+            if (document_) {
+                document_->navigateToAnchor(anchor);
+                document_->setFocus(Qt::OtherFocusReason);
+            }
         };
+        sidebar_->activate_document = [this](int index) { activateDocument(index); };
+        sidebar_->close_document = [this](int index) { closeDocument(index); };
         shell->addWidget(sidebar_);
         auto* content = new QWidget;
         shell->addWidget(content, 1);
@@ -1991,7 +2248,9 @@ private:
         auto* zoom_menu = new QMenu(zoom_label_);
         for (const int percent : {80, 100, 125, 150, 200})
             zoom_menu->addAction(QStringLiteral("%1%").arg(percent), this,
-                                 [this, percent] { changeZoom(percent - document_->zoomPercent()); });
+                                 [this, percent] {
+                if (document_) changeZoom(percent - document_->zoomPercent());
+            });
         QObject::connect(zoom_label_, &QPushButton::clicked, this, [this, zoom_menu] {
             zoom_menu->popup(zoom_label_->mapToGlobal(QPoint(0, zoom_label_->height() + 4)));
         });
@@ -2012,7 +2271,7 @@ private:
         reload_action_ = menu->addAction(QStringLiteral("Reload\tF5"), this,
                                          [this] { reloadDocument(); });
         menu->addAction(QStringLiteral("Reset zoom"), this,
-                        [this] { changeZoom(100 - document_->zoomPercent()); });
+                        [this] { if (document_) changeZoom(100 - document_->zoomPercent()); });
         menu->addSeparator();
         menu->addAction(QStringLiteral("Fullscreen\tF11"), this,
                         [this] { toggleFullscreen(); });
@@ -2065,10 +2324,10 @@ private:
         identity->addWidget(empty_title);
         identity->addStretch();
         prompt_layout->addLayout(identity);
-        auto* empty_hint = new QLabel(QStringLiteral("Open a Markdown file, or drop one here."));
+        auto* empty_hint = new QLabel(QStringLiteral("Open a Markdown or text file, or drop one here."));
         empty_hint->setObjectName(QStringLiteral("emptyHint"));
         prompt_layout->addWidget(empty_hint);
-        auto* empty_open = new MoonButton(QStringLiteral("Open Markdown file"));
+        auto* empty_open = new MoonButton(QStringLiteral("Open document"));
         empty_open->setObjectName(QStringLiteral("emptyOpen"));
         empty_open->setAccessibleName(QStringLiteral("Open Markdown file"));
         empty_open->setToolTip(QStringLiteral("Ctrl+O"));
@@ -2089,11 +2348,6 @@ private:
         empty_layout->addStretch(3);
         stack_->addWidget(empty);
 
-        document_ = new DocumentView(api_, backend_);
-        document_->zoomChanged = [this](int percent) {
-            zoom_label_->setText(QStringLiteral("%1%").arg(percent));
-        };
-        stack_->addWidget(document_);
         root->addWidget(stack_, 1);
 
         diagnostics_bar_ = new QLabel;
@@ -2106,30 +2360,6 @@ private:
     }
 
 
-    void setupWatcher() {
-        watcher_ = new QFileSystemWatcher(this);
-        reload_delay_.setSingleShot(true);
-        reload_delay_.setInterval(180);
-        QObject::connect(watcher_, &QFileSystemWatcher::fileChanged, this, [this] {
-            reload_delay_.start();
-        });
-        QObject::connect(&reload_delay_, &QTimer::timeout, this, [this] {
-            if (!current_path_.isEmpty() && QFileInfo::exists(current_path_)) {
-                openDocument(current_path_);
-            }
-        });
-    }
-
-    void watchCurrentFile() {
-        const auto paths = watcher_->files();
-        if (!paths.isEmpty()) {
-            watcher_->removePaths(paths);
-        }
-        if (!current_path_.isEmpty()) {
-            watcher_->addPath(current_path_);
-        }
-    }
-
     void chooseDocument() {
         QSettings settings;
         auto initial = settings.value(QStringLiteral("lastOpenDirectory")).toString();
@@ -2137,20 +2367,19 @@ private:
             initial = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
         }
         const auto path = QFileDialog::getOpenFileName(
-            this, QStringLiteral("Open Markdown file"), initial,
-            QStringLiteral("Markdown files (*.md *.markdown *.mdown *.mkd);;All files (*)"));
+            this, QStringLiteral("Open document"), initial,
+            QStringLiteral("Moonmark documents (*.md *.markdown *.txt);;Markdown files (*.md *.markdown);;Text files (*.txt);;All files (*)"));
         if (!path.isEmpty()) {
             openDocument(path);
         }
     }
 
     void reloadDocument() {
-        if (!current_path_.isEmpty()) {
-            openDocument(current_path_);
-        }
+        reloadSession(active_);
     }
 
     void changeZoom(int delta) {
+        if (!document_) return;
         document_->changeZoom(delta);
         zoom_label_->setText(QStringLiteral("%1%").arg(document_->zoomPercent()));
         updateStatus();
@@ -2187,6 +2416,11 @@ private:
     }
 
     void updateStatus() {
+        if (!document_ || !backend_) {
+            diagnostics_bar_->clear();
+            diagnostics_bar_->setVisible(false);
+            return;
+        }
         const auto counters = api_->backend_counters(backend_);
         if (diagnostics_) {
             diagnostics_bar_->setText(
@@ -2200,6 +2434,91 @@ private:
                          'f', 1));
         }
         diagnostics_bar_->setVisible(diagnostics_ && !fullscreen_);
+    }
+
+    void reloadSession(OpenDocumentSession* session) {
+        if (!session || !QFileInfo::exists(session->canonical_path)) return;
+        const auto state = session->view->interactionState();
+        const auto utf8 = session->canonical_path.toUtf8();
+        const auto buffer = api_->open_document(
+            session->backend, reinterpret_cast<const std::uint8_t*>(utf8.constData()),
+            static_cast<std::size_t>(utf8.size()));
+        const auto root = jsonFromBuffer(buffer);
+        api_->buffer_free(buffer);
+        session->view->load(root);
+        session->view->restoreInteractionState(state);
+        session->outline = root.value("toc").toArray();
+        if (!session->watcher->files().contains(session->canonical_path))
+            session->watcher->addPath(session->canonical_path);
+        if (active_ == session) {
+            sidebar_->setOutline(session->outline);
+            updateStatus();
+        }
+    }
+
+    void activateDocument(int index) {
+        if (index < 0 || index >= static_cast<int>(documents_.size())) return;
+        active_ = documents_[static_cast<std::size_t>(index)].get();
+        backend_ = active_->backend;
+        document_ = active_->view;
+        current_path_ = active_->canonical_path;
+        const QFileInfo file(current_path_);
+        title_label_->setFullText(file.dir().dirName() + QStringLiteral("   /   ") + file.fileName());
+        title_label_->setToolTip(current_path_);
+        setWindowTitle(QStringLiteral("%1 — Moonmark").arg(file.fileName()));
+        stack_->setCurrentWidget(document_);
+        document_->setFocus(Qt::OtherFocusReason);
+        reload_action_->setEnabled(true);
+        document_actions_->setVisible(!fullscreen_);
+        zoom_label_->setText(QStringLiteral("%1%").arg(document_->zoomPercent()));
+        refreshSidebar();
+        updateStatus();
+    }
+
+    void closeDocument(int index) {
+        if (index < 0 || index >= static_cast<int>(documents_.size())) return;
+        auto* closing = documents_[static_cast<std::size_t>(index)].get();
+        const bool was_active = closing == active_;
+        stack_->removeWidget(closing->view);
+        delete closing->view;
+        delete closing->watcher;
+        delete closing->reload_delay;
+        api_->backend_free(closing->backend);
+        documents_.erase(documents_.begin() + index);
+        if (!documents_.empty()) {
+            const int replacement = was_active ? std::min(index, static_cast<int>(documents_.size()) - 1)
+                                               : activeDocumentIndex();
+            activateDocument(std::max(0, replacement));
+            return;
+        }
+        active_ = nullptr;
+        backend_ = nullptr;
+        document_ = nullptr;
+        current_path_.clear();
+        stack_->setCurrentIndex(0);
+        title_label_->setFullText(QStringLiteral("Moonmark"));
+        title_label_->setToolTip({});
+        setWindowTitle(QStringLiteral("Moonmark"));
+        reload_action_->setEnabled(false);
+        document_actions_->hide();
+        zoom_label_->setText(QStringLiteral("100%"));
+        refreshSidebar();
+        updateStatus();
+    }
+
+    [[nodiscard]] int activeDocumentIndex() const {
+        for (int index = 0; index < static_cast<int>(documents_.size()); ++index)
+            if (documents_[static_cast<std::size_t>(index)].get() == active_) return index;
+        return -1;
+    }
+
+    void refreshSidebar() {
+        QStringList names;
+        names.reserve(static_cast<int>(documents_.size()));
+        for (const auto& session : documents_)
+            names.push_back(QFileInfo(session->canonical_path).fileName());
+        sidebar_->setDocuments(names, activeDocumentIndex());
+        sidebar_->setOutline(active_ ? active_->outline : QJsonArray{});
     }
 
     const MoonmarkApiTable* api_ = nullptr;
@@ -2223,12 +2542,14 @@ private:
     QLabel* title_symbol_ = nullptr;
     ElidingLabel* title_label_ = nullptr;
     QLabel* diagnostics_bar_ = nullptr;
-    QFileSystemWatcher* watcher_ = nullptr;
-    QTimer reload_delay_;
+    std::vector<std::unique_ptr<OpenDocumentSession>> documents_;
+    OpenDocumentSession* active_ = nullptr;
     QString current_path_;
     bool fullscreen_ = false;
     bool pre_fullscreen_maximized_ = false;
     bool diagnostics_ = false;
+    QVariantAnimation sidebar_animation_;
+    bool sidebar_target_visible_ = true;
 };
 
 void applyMoonmarkStyle(QApplication& application) {
@@ -2262,6 +2583,7 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
     // Smoke tests must not update the user's application settings.
     for (const auto& argument : argument_storage) {
         if (argument.startsWith("--smoke-")) {
+            qputenv("MOONMARK_REDUCED_MOTION", "1");
             QSettings::setDefaultFormat(QSettings::IniFormat);
             QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                               QDir::current().absoluteFilePath("target/native-settings"));
@@ -2271,7 +2593,7 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
     MoonmarkWindow window(api);
     window.show();
     QString smoke_mode;
-    QString document_path;
+    QStringList document_paths;
     for (int index = 1; index < qt_argc; ++index) {
         const auto argument = QString::fromLocal8Bit(qt_arguments[static_cast<std::size_t>(index)]);
         if (argument == QStringLiteral("--smoke-render")) {
@@ -2298,15 +2620,17 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
             smoke_mode = QStringLiteral("image-geometry");
         } else if (argument == QStringLiteral("--smoke-images")) {
             smoke_mode = QStringLiteral("images");
+        } else if (argument == QStringLiteral("--smoke-multidoc")) {
+            smoke_mode = QStringLiteral("multidoc");
+        } else if (argument == QStringLiteral("--smoke-plaintext")) {
+            smoke_mode = QStringLiteral("plaintext");
         } else if (!argument.startsWith(QLatin1Char('-')) && QFileInfo::exists(argument)) {
-            document_path = argument;
+            document_paths.push_back(argument);
         }
     }
-    if (!document_path.isEmpty()) {
-        window.openDocument(document_path);
-    }
+    for (const auto& document_path : document_paths) window.openDocument(document_path);
     if (!smoke_mode.isEmpty()) {
-        if (document_path.isEmpty() && smoke_mode != QStringLiteral("snapshot") &&
+        if (document_paths.isEmpty() && smoke_mode != QStringLiteral("snapshot") &&
             smoke_mode != QStringLiteral("icon")) {
             return 3;
         }

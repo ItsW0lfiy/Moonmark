@@ -80,6 +80,8 @@ pub fn to_presentation(
             .and_then(|name| name.to_str())
             .unwrap_or("Moonmark")
             .to_owned(),
+        source_type: "markdown".into(),
+        literal_text: String::new(),
         error: String::new(),
         commands: output.commands,
         image_ids,
