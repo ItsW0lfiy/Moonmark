@@ -8,6 +8,8 @@ Rust uses a fixed Rayon pool of four workers, generation-based cancellation, and
 
 The Qt UI thread converts returned RGBA buffers into copied QImages and releases the Rust buffer immediately. Loaded document resources remain keyed by image ID. Resize and zoom update QTextImageFormat geometry without rereading or redecoding. Replacing the document advances the Rust generation and clears presentation occurrences.
 
+Dev.5 batches native layout invalidation while delivering available results and while applying zoom, then re-enables Qt layout once. Unchanged image dimensions do not receive another character-format write. This reduces repeated UI-thread relayout without changing decode width, cache budget, generation semantics, or resource ownership. Profiling records queue/decode time independently from QImage copy and native geometry delivery; decoder variability must not be mistaken for a UI optimization gain.
+
 The deterministic stress fixture contains 250 valid occurrences sharing six underlying assets plus five intentionally missing references. Missing placeholders are unavailable source references, not decoder failures.
 
 Dev.4 zoom changes the display dimensions of already-loaded resources, preserving aspect ratio and constraining images to available document width. The stress smoke exercises 100/125/150/100/80/100 percent after decoding and asserts no additional image requests, file reads, parses, or document constructions. Increased zoom may magnify an existing bounded decode rather than requesting a sharper replacement; this prevents resize/zoom decode storms.
