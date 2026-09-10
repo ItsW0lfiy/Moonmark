@@ -141,6 +141,10 @@ impl Backend {
     }
 }
 
+fn elapsed_us(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Backend;
@@ -166,8 +170,4 @@ mod tests {
 
         std::fs::remove_dir_all(directory).expect("remove fixture directory");
     }
-}
-
-fn elapsed_us(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
