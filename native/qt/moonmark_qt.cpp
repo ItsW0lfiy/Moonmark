@@ -1838,8 +1838,9 @@ public:
                                 document_->plainText() == expected &&
                                 document_->discoveredImages() == 0 && counters.parse_count == 0;
                 std::fprintf(stdout,
-                             "MOONMARK_SMOKE plaintext=%s chars=%lld parse_count=%llu images=%d\n",
+                             "MOONMARK_SMOKE plaintext=%s chars=%lld construction_us=%llu parse_count=%llu images=%d\n",
                              ok ? "ok" : "failed", static_cast<long long>(expected.size()),
+                             static_cast<unsigned long long>(document_->constructionMicros()),
                              static_cast<unsigned long long>(counters.parse_count),
                              document_->discoveredImages());
                 std::fflush(stdout);
