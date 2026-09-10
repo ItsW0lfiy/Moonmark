@@ -492,7 +492,7 @@ public:
             auto* table = qobject_cast<QTextTable*>(frame);
             if (table == nullptr) continue;
             ++tables;
-            if (table->format().border() != 1) return false;
+            if (table->format().border() > 1) return false;
             for (int row = 0; row < table->rows(); ++row) {
                 for (int column = 0; column < table->columns(); ++column) {
                     const auto cell = table->cellAt(row, column);
@@ -1102,10 +1102,8 @@ private:
         cursor.setBlockFormat(spacer);
         QTextFrameFormat frame_format;
         frame_format.setBackground(QColor(colour::code));
-        frame_format.setBorder(1);
-        frame_format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
-        frame_format.setBorderBrush(QColor(colour::border));
-        frame_format.setPadding(14.0);
+        frame_format.setBorder(0);
+        frame_format.setPadding(16.0);
         frame_format.setTopMargin(6.0);
         frame_format.setBottomMargin(13.0);
         frame_format.setLeftMargin(depth * 22.0);
@@ -1121,7 +1119,7 @@ private:
 
         auto header_block = bodyBlockFormat(115);
         header_block.setTopMargin(0);
-        header_block.setBottomMargin(5);
+        header_block.setBottomMargin(6);
         inside.setBlockFormat(header_block);
         auto language = baseCharacterFormat(9.5);
         language.setForeground(QColor(colour::muted));
@@ -1141,7 +1139,7 @@ private:
         separator_block.setLineHeight(1, QTextBlockFormat::FixedHeight);
         separator_block.setTopMargin(0);
         separator_block.setBottomMargin(8);
-        separator_block.setBackground(QColor(colour::border));
+        separator_block.setBackground(QColor(colour::code_separator));
         inside.setBlockFormat(separator_block);
         inside.insertText(QString(QChar(0x200B)), baseCharacterFormat(1));
         inside.insertBlock();
@@ -1192,9 +1190,9 @@ private:
         spacer.setBottomMargin(0);
         cursor.setBlockFormat(spacer);
         QTextTableFormat table_format;
-        table_format.setBorder(1);
+        table_format.setBorder(0.75);
         table_format.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
-        table_format.setBorderBrush(QColor(colour::border));
+        table_format.setBorderBrush(QColor(colour::table_outer));
         table_format.setBorderCollapse(true);
         table_format.setHeaderRowCount(1);
         table_format.setWidth(QTextLength(QTextLength::PercentageLength, 100));
