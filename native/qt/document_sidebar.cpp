@@ -33,7 +33,7 @@ DocumentSidebar::DocumentSidebar(QWidget* parent) : QWidget(parent) {
     layout->addSpacing(24);
     auto* open_button = new QPushButton(QStringLiteral("Open document"));
     open_button->setMinimumHeight(36);
-    open_button->setToolTip(QStringLiteral("Open Markdown file (Ctrl+O)"));
+    open_button->setToolTip(QStringLiteral("Open Markdown or text file (Ctrl+O)"));
     connect(open_button, &QPushButton::clicked, this, [this] { if (open) open(); });
     layout->addWidget(open_button);
     reload_ = new QPushButton(QStringLiteral("Reload"));

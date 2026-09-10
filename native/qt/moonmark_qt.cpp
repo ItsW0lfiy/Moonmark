@@ -575,6 +575,9 @@ public:
 
     [[nodiscard]] int zoomPercent() const { return zoom_percent_; }
     [[nodiscard]] bool isPlainText() const { return plain_text_; }
+    [[nodiscard]] bool scrollMotionRunning() const {
+        return scroll_animation_.state() == QAbstractAnimation::Running;
+    }
     std::function<void(int)> zoomChanged;
 
     void navigateToAnchor(const QString& anchor, bool animate = true) {
@@ -1656,6 +1659,63 @@ public:
     }
 
     void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("motion")) {
+            QTimer::singleShot(300, this, [this] {
+                const auto before = api_->backend_counters(backend_);
+                const auto constructions = document_->constructionCount();
+                auto* tree = sidebar_->findChild<QTreeWidget*>(QStringLiteral("documentOutline"));
+                auto* first = tree ? tree->topLevelItem(0) : nullptr;
+                auto* last = tree && tree->topLevelItemCount() > 0
+                           ? tree->topLevelItem(tree->topLevelItemCount() - 1) : nullptr;
+                while (last && last->childCount() > 0) last = last->child(last->childCount() - 1);
+                bool ok = first && last;
+                QElapsedTimer heading_setup;
+                heading_setup.start();
+                if (last) document_->navigateToAnchor(last->data(0, Qt::UserRole).toString());
+                const auto heading_setup_us = heading_setup.nsecsElapsed() / 1000;
+                if (first) document_->navigateToAnchor(first->data(0, Qt::UserRole).toString());
+                if (last) document_->navigateToAnchor(last->data(0, Qt::UserRole).toString());
+                ok &= document_->scrollMotionRunning();
+                QTimer::singleShot(240, this, [this, before, constructions, ok, heading_setup_us] mutable {
+                    ok &= document_->verticalScrollBar()->value() > 0;
+                    if (auto* tree = sidebar_->findChild<QTreeWidget*>(QStringLiteral("documentOutline"))) {
+                        if (auto* first = tree->topLevelItem(0))
+                            document_->navigateToAnchor(first->data(0, Qt::UserRole).toString());
+                    }
+                    QKeyEvent cancel(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+                    QApplication::sendEvent(document_, &cancel);
+                    ok &= !document_->scrollMotionRunning();
+                    QElapsedTimer sidebar_setup;
+                    sidebar_setup.start();
+                    sidebar_requested_ = false;
+                    sidebar_explicit_ = true;
+                    updateSidebarVisibility();
+                    const auto sidebar_setup_us = sidebar_setup.nsecsElapsed() / 1000;
+                    QTimer::singleShot(180, this,
+                        [this, before, constructions, ok, heading_setup_us, sidebar_setup_us] mutable {
+                        ok &= sidebar_->isHidden();
+                        sidebar_requested_ = true;
+                        updateSidebarVisibility();
+                        QTimer::singleShot(200, this,
+                            [this, before, constructions, ok, heading_setup_us, sidebar_setup_us] mutable {
+                            const auto after = api_->backend_counters(backend_);
+                            ok &= sidebar_->isVisible() && before.parse_count == after.parse_count &&
+                                  before.load_count == after.load_count &&
+                                  before.image_request_count == after.image_request_count &&
+                                  constructions == document_->constructionCount();
+                            std::fprintf(stdout,
+                                "MOONMARK_SMOKE motion=%s heading_setup_us=%lld sidebar_setup_us=%lld counters=%s\n",
+                                ok ? "ok" : "failed", static_cast<long long>(heading_setup_us),
+                                static_cast<long long>(sidebar_setup_us),
+                                constructions == document_->constructionCount() ? "stable" : "changed");
+                            std::fflush(stdout);
+                            QCoreApplication::exit(ok ? 0 : 16);
+                        });
+                    });
+                });
+            });
+            return;
+        }
         if (mode == QStringLiteral("multidoc")) {
             QTimer::singleShot(350, this, [this] {
                 bool ok = documents_.size() >= 2;
@@ -1682,6 +1742,12 @@ public:
                 const bool state_retained = document_->zoomPercent() == 125 &&
                                             document_->interactionState().scroll == retained.scroll;
                 ok &= state_retained;
+                QElapsedTimer switching;
+                switching.start();
+                constexpr int switch_count = 40;
+                for (int pass = 0; pass < switch_count; ++pass)
+                    activateDocument(pass % static_cast<int>(documents_.size()));
+                const auto switch_average_us = switching.nsecsElapsed() / 1000 / switch_count;
                 bool counters_stable = true;
                 for (std::size_t index = 0; index < documents_.size(); ++index) {
                     const auto after = api_->backend_counters(documents_[index]->backend);
@@ -1698,12 +1764,13 @@ public:
                 while (!documents_.empty()) closeDocument(0);
                 ok &= active_ == nullptr && stack_->currentIndex() == 0;
                 std::fprintf(stdout,
-                             "MOONMARK_SMOKE multidoc=%s duplicate=%s state=%s counters=%s plain_text=%s final=%s\n",
+                             "MOONMARK_SMOKE multidoc=%s duplicate=%s state=%s counters=%s plain_text=%s switch_average_us=%lld final=%s\n",
                              ok ? "ok" : "failed",
                              duplicate_ok ? "deduplicated" : "failed",
                              state_retained ? "retained" : "failed",
                              counters_stable ? "stable" : "changed",
                              plain_present ? "present" : "missing",
+                             static_cast<long long>(switch_average_us),
                              active_ == nullptr && stack_->currentIndex() == 0 ? "empty" : "failed");
                 std::fflush(stdout);
                 QCoreApplication::exit(ok ? 0 : 15);
@@ -1788,14 +1855,15 @@ public:
             if (width > 0 && height > 0) resize(width, height);
             QTimer::singleShot(500, this, [this] {
                 const auto zoom = qEnvironmentVariableIntValue("MOONMARK_SNAPSHOT_ZOOM");
-                if (zoom > 0) changeZoom(zoom - document_->zoomPercent());
+                if (zoom > 0 && document_) changeZoom(zoom - document_->zoomPercent());
                 if (qEnvironmentVariable("MOONMARK_SNAPSHOT_NO_SIDEBAR") == QStringLiteral("1")) {
                     sidebar_requested_ = false;
                     updateSidebarVisibility();
                 }
                 const auto scroll = qEnvironmentVariableIntValue("MOONMARK_SNAPSHOT_SCROLL");
-                if (scroll > 0) document_->verticalScrollBar()->setValue(scroll);
-                if (qEnvironmentVariable("MOONMARK_SNAPSHOT_SELECTION") == QStringLiteral("1")) document_->selectAll();
+                if (scroll > 0 && document_) document_->verticalScrollBar()->setValue(scroll);
+                if (document_ && qEnvironmentVariable("MOONMARK_SNAPSHOT_SELECTION") == QStringLiteral("1"))
+                    document_->selectAll();
                 if (qEnvironmentVariable("MOONMARK_SNAPSHOT_MENU") == QStringLiteral("1")) {
                     auto* menu = findChild<QMenu*>(QStringLiteral("documentMenu"));
                     menu->popup(mapToGlobal(QPoint(this->width() - 300, 40)));
@@ -2230,8 +2298,8 @@ private:
         actions->setContentsMargins(0, 0, 6, 0);
         actions->setSpacing(2);
         open_ = new MoonButton(QStringLiteral("Open"));
-        open_->setAccessibleName(QStringLiteral("Open Markdown file"));
-        open_->setToolTip(QStringLiteral("Open Markdown file (Ctrl+O)"));
+        open_->setAccessibleName(QStringLiteral("Open document"));
+        open_->setToolTip(QStringLiteral("Open Markdown or text file (Ctrl+O)"));
         QObject::connect(open_, &QPushButton::clicked, this, [this] { chooseDocument(); });
         actions->addWidget(open_);
         actions->addSpacing(10);
@@ -2327,7 +2395,7 @@ private:
         prompt_layout->addWidget(empty_hint);
         auto* empty_open = new MoonButton(QStringLiteral("Open document"));
         empty_open->setObjectName(QStringLiteral("emptyOpen"));
-        empty_open->setAccessibleName(QStringLiteral("Open Markdown file"));
+        empty_open->setAccessibleName(QStringLiteral("Open document"));
         empty_open->setToolTip(QStringLiteral("Ctrl+O"));
         QObject::connect(empty_open, &QPushButton::clicked, this, [this] { chooseDocument(); });
         auto* open_row = new QHBoxLayout;
@@ -2579,9 +2647,11 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
     application.setWindowIcon(applicationIcon());
     applyMoonmarkStyle(application);
     // Smoke tests must not update the user's application settings.
+    const bool motion_smoke = std::find(argument_storage.cbegin(), argument_storage.cend(),
+                                        QByteArray("--smoke-motion")) != argument_storage.cend();
     for (const auto& argument : argument_storage) {
         if (argument.startsWith("--smoke-")) {
-            qputenv("MOONMARK_REDUCED_MOTION", "1");
+            if (!motion_smoke) qputenv("MOONMARK_REDUCED_MOTION", "1");
             QSettings::setDefaultFormat(QSettings::IniFormat);
             QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                               QDir::current().absoluteFilePath("target/native-settings"));
@@ -2622,6 +2692,8 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
             smoke_mode = QStringLiteral("multidoc");
         } else if (argument == QStringLiteral("--smoke-plaintext")) {
             smoke_mode = QStringLiteral("plaintext");
+        } else if (argument == QStringLiteral("--smoke-motion")) {
+            smoke_mode = QStringLiteral("motion");
         } else if (!argument.startsWith(QLatin1Char('-')) && QFileInfo::exists(argument)) {
             document_paths.push_back(argument);
         }

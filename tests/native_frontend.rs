@@ -10,9 +10,17 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn run_smoke(mode: &str, fixture_name: &str) -> String {
+    run_smoke_many(mode, &[fixture_name])
+}
+
+fn run_smoke_many(mode: &str, fixture_names: &[&str]) -> String {
+    let fixtures = fixture_names
+        .iter()
+        .map(|name| fixture(name))
+        .collect::<Vec<_>>();
     let output = Command::new(env!("CARGO_BIN_EXE_moonmark"))
         .arg(mode)
-        .arg(fixture(fixture_name))
+        .args(fixtures)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("launch Moonmark native smoke test");
@@ -34,6 +42,22 @@ fn qt_frontend_smoke_matrix() {
     assert!(output.contains("selection_copy=ok"), "{output}");
     let output = run_smoke("--smoke-navigation", "concept-presentation.md");
     assert!(output.contains("navigation=ok"), "{output}");
+    let output = run_smoke("--smoke-motion", "compatibility/all-features.md");
+    assert!(output.contains("motion=ok"), "{output}");
+    assert!(output.contains("counters=stable"), "{output}");
+
+    let output = run_smoke("--smoke-plaintext", "text/literal.txt");
+    assert!(output.contains("plaintext=ok"), "{output}");
+    assert!(output.contains("parse_count=0"), "{output}");
+
+    let output = run_smoke_many(
+        "--smoke-multidoc",
+        &["code-block-quality.md", "text/literal.txt"],
+    );
+    assert!(output.contains("multidoc=ok"), "{output}");
+    assert!(output.contains("duplicate=deduplicated"), "{output}");
+    assert!(output.contains("state=retained"), "{output}");
+    assert!(output.contains("counters=stable"), "{output}");
     let output = run_smoke("--smoke-zoom", "moonmark-visual-test.md");
     assert!(output.contains("zoom=ok"), "{output}");
     assert!(output.contains("image_request_delta=0"), "{output}");
