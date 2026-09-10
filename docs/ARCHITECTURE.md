@@ -41,6 +41,12 @@ This narrow C ABI was selected over CXX-Qt because the existing framework-neutra
 
 Qt types do not enter the semantic model. The current adapter is replaceable, while QTextDocument supplies mature selection, layout, accessibility plumbing, and copy behavior.
 
+## Retained document sessions
+
+The desktop window owns an ordered set of open-document sessions. Each session has one canonical path, one Rust backend, one native `DocumentView`/`QTextDocument`, one outline, and one file watcher/debounce timer. The active session is only a `QStackedWidget` selection; switching it does not call the Rust open function or rebuild the native document. Closing a session releases its widget, watcher, native resources, and Rust image pipeline. Opening a canonically identical path activates the existing session.
+
+Markdown sessions follow the normal Comrak semantic path. `.txt` sessions are explicitly tagged `plainText` by the Rust presentation contract and carry exact source text; they do not create a Comrak AST, Markdown commands, TOC entries, links, or image requests.
+
 `native/qt/moon_style.*` owns the New Moon palette, dimensions, and Qt interaction-state styling. `native/qt/moon_title_bar.*` owns native-painted caption controls plus title-bar move, double-click, and system-menu behavior. Markdown construction remains in the presentation adapter and does not depend on either component.
 
 Windows is primary. Shared Rust logic and most Qt Widgets code are portable; Win32 message handling is confined to the Qt adapter's guarded Windows sections. The Linux build path uses `pkg-config` for Qt6Widgets discovery, but compilation and behavior still require physical validation.

@@ -20,4 +20,10 @@ Qt has no CSS-style radius/padding API for inline character backgrounds. Dev.5 e
 
 Standalone images use 100% line height and explicit block margins. The previous 125% line height added unintended leading proportional to image height (115.8px for a 463px image), despite the image block's bounding rectangle reporting the correct image height. The regression compares the following block's position against the image block's bottom and declared margins, across loading and zoom.
 
-Long code uses the document's horizontal scrollbar rather than per-block overflow. Code frames and the accepted dev.4 shell are unchanged by dev.5. Very large documents still require native format updates and layout during zoom; profiling separates action/paint time from exhaustive verification.
+Long code uses the document's horizontal scrollbar rather than per-block overflow. Very large documents still require native format updates and layout during zoom; profiling separates action/paint time from exhaustive verification.
+
+Dev.6 removes the hard code-frame stroke and uses one low-contrast graphite `QTextFrame` with integrated language metadata, a quiet real separator, native syntax spans, and the existing Copy anchor. `QTextFrameFormat` has no corner-radius API; Moonmark does not rasterize code or replace native document painting merely to fake rounded corners. Tables retain subtle horizontal structure while using still quieter vertical and outer separators.
+
+Heading anchors remain real `QTextCharFormat` named anchors attached to heading blocks. Outline navigation resolves the named anchor's current layout geometry at activation time, applies top breathing room, and animates only the scrollbar. Reflow after resize, zoom, or image completion therefore does not leave stale cached coordinates.
+
+Literal text uses a separate presentation mode. The Qt adapter inserts the exact source into one read-only native document with a monospace fallback stack and no wrapping, preserving tabs, whitespace, long lines, selection, clipboard behavior, and zoom without Markdown interpretation.

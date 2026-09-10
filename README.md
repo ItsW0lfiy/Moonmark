@@ -4,7 +4,7 @@
 
 Moonmark is a Windows-first, viewer-first Markdown application. It is one native process built with Rust, C++20, Qt 6 Widgets, and QTextDocument. Linux is the secondary desktop target; Android remains later work. Moonmark contains no browser engine, web frontend, local server, CLR, JVM, or Node.js runtime.
 
-Current development milestone: `0.1.0-dev.5` — Rendering Polish & Performance.
+Current development milestone: `0.1.0-dev.6` — Multi-Document Navigation, Motion & UI Polish.
 
 ## Architecture
 
@@ -23,7 +23,9 @@ The `0.1.0-dev.4` New Moon presentation uses a collapsible file-first sidebar wi
 
 Moonmark is file-oriented rather than vault-oriented: it reads an ordinary Markdown file and releases the read handle. Relative images resolve from that document; valid parent, absolute, and `file:///` paths are allowed after canonicalization. Remote images remain disabled.
 
-Dev.5 preserves the approved dev.4 UI. It adds restrained native inline-code decoration, fixes image-height-dependent blank space, and batches zoom/image layout work. See [dev.5 validation](docs/DEV5_VALIDATION.md) for measured timings and remaining limitations.
+Dev.6 retains one complete Rust backend and native `QTextDocument` per open file. Switching therefore preserves scroll, zoom, selection, outline, watcher, and decoded image state without rereading or reparsing. Canonically identical paths activate the existing session. Literal `.txt` files bypass Comrak and Markdown presentation entirely.
+
+Document navigation and mouse-wheel notches use short interruptible native easing; precision touchpad/pixel scrolling remains direct. Set `MOONMARK_REDUCED_MOTION=1` to disable Moonmark-owned animation. Code blocks and tables use quieter graphite framing while retaining native selection and accessibility.
 
 ## Build and run
 
@@ -33,6 +35,7 @@ On Windows, install Rust 1.94+ with the MSVC target and a C++20 MSVC toolchain. 
 pwsh -File scripts/bootstrap_qt.ps1
 cargo run
 cargo run -- fixtures\moonmark-visual-test.md
+cargo run -- fixtures\moonmark-visual-test.md fixtures\text\literal.txt
 cargo check
 cargo test
 cargo build --release
@@ -44,6 +47,7 @@ Generate repeatable stress inputs and run the headless Rust benchmark with:
 
 ```powershell
 cargo run --bin generate_stress_fixture
+cargo run --bin generate_text_fixture
 cargo run --release --bin renderer_benchmark -- fixtures\generated\image-stress.md
 ```
 
@@ -54,3 +58,5 @@ pwsh -File scripts/package_windows.ps1
 ```
 
 See [architecture](docs/ARCHITECTURE.md), [renderer](docs/NATIVE_RENDERER.md), [images](docs/IMAGE_PIPELINE.md), [window behavior](docs/WINDOW_FRAME.md), [building](docs/BUILDING.md), [packaging](docs/PACKAGING.md), and [Qt licensing](docs/QT_LICENSING.md).
+
+Moonmark source is licensed under [GPL-3.0-only](LICENSE). Official branding is covered separately by [BRANDING.md](BRANDING.md). Review the [dependency license audit](docs/DEPENDENCY_LICENSE_AUDIT.md), [third-party notices](THIRD_PARTY_NOTICES.txt), and [roadmap](ROADMAP.md) before distribution work.

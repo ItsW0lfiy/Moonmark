@@ -1,5 +1,7 @@
 # Image pipeline
 
+Each retained document session owns its existing bounded image pipeline and 128 MiB cache policy. Switching sessions does not reconstruct its `QTextDocument`, clear its resources, or request already loaded images again. Closing the session generation-invalidates pending work and releases its cache with the Rust backend. Multiple open documents are intentionally isolated in dev.6; cross-document cache sharing is not attempted without measured need.
+
 Rust resolves local references relative to the opened Markdown document and canonicalizes the resulting path. Existing files referenced through normal relative paths, child paths, `../`, absolute paths, Windows separators, percent encoding, Unicode, and `file:///` URIs are allowed. Moonmark does not restore the rejected folder-approval model. Missing and unsupported files remain visible as native placeholders. HTTP/HTTPS images and unsupported URI schemes never issue a network request.
 
 The presentation model assigns document-local image IDs. The Qt adapter requests visible and nearby images at a bounded display width. Repeated occurrences sharing a canonical asset also share one Rust decode request/result while retaining separate QTextDocument positions.

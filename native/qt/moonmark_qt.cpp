@@ -1807,9 +1807,9 @@ public:
                         if (!character.isLetterOrNumber() && character != QLatin1Char('-'))
                             character = QLatin1Char('_');
                     }
-                    QDir::current().mkpath(QStringLiteral("target/visual-dev5"));
+                    QDir::current().mkpath(QStringLiteral("target/visual-dev6"));
                     const auto output = QDir::current().absoluteFilePath(
-                        QStringLiteral("target/visual-dev5/%1.png").arg(name));
+                        QStringLiteral("target/visual-dev6/%1.png").arg(name));
                     const auto pixels = qEnvironmentVariable("MOONMARK_SNAPSHOT_MENU") == QStringLiteral("1")
                         ? findChild<QMenu*>(QStringLiteral("documentMenu"))->grab() : grab();
                     const bool saved = pixels.save(output, "PNG");

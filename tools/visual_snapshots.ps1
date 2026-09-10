@@ -10,6 +10,7 @@ $cases = @(
     @('headings-lists', 'fixtures/moonmark-visual-test.md', 1200, 820, 300),
     @('tables', 'fixtures/document-tables.md', 1200, 960, 0),
     @('code', 'fixtures/code-block-quality.md', 1200, 900, 0),
+    @('plain-text', 'fixtures/text/literal.txt', 1200, 900, 0),
     @('narrow', 'fixtures/document-tables.md', 720, 900, 0),
     @('wide', 'fixtures/document-tables.md', 1800, 960, 0),
     @('images', 'fixtures/generated/image-stress.md', 1200, 900, 0),

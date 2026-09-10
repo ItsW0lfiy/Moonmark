@@ -1,5 +1,9 @@
 # Window behavior
 
+Dev.6 does not change the established Normal, Maximized, and BorderlessFullscreen state model. Multi-document activation changes only the stacked document view and title metadata. Window resize, maximize, restore, and F11 do not reopen files or recreate retained sessions.
+
+Moonmark-owned motion uses short cubic-out interpolation. Sidebar width transitions run for roughly 150–170 ms; heading navigation is distance-clamped up to 210 ms; mouse-wheel notches use a shorter 135 ms path. New navigation retargets current motion, while mouse press, scrollbar drag, keyboard input, precision pixel scrolling, and touchpad input cancel it. `MOONMARK_REDUCED_MOTION=1` makes transitions immediate.
+
 Moonmark uses one frameless Qt Widgets window with a custom achromatic title bar. The dedicated `MoonTitleBar` component owns title-region move, double-click, and system-menu input; Windows-specific hit testing remains contained in the Qt adapter. Document/core state remains independent.
 
 Rust tracks three semantic modes: `Normal`, `Maximized`, and `BorderlessFullscreen`.
