@@ -19,7 +19,7 @@ Markdown source
 
 Rust owns file loading, Comrak parsing, semantic/presentation models, syntax classification, image policy/decoding/cache, diagnostics, and framework-neutral window state. C++ owns the Qt widget shell, native QTextDocument construction, selection/clipboard interaction, document layout, and Windows presentation integration. The boundary transfers UTF-8 JSON, IDs, owned byte buffers, counters, and function pointers; it does not use a second process or network IPC.
 
-The `0.1.0-dev.4` New Moon presentation uses a collapsible file-first sidebar with Open/Reload and a native heading outline, a quiet breadcrumb header with Windows captions, and a broad document canvas. Tables have graphite headers and restrained horizontal/vertical separators; inline code has subtle graphite backgrounds; fences remain one coherent native frame. True percentage zoom scales native document layout while retaining selection and decoded images. Syntax colors remain restrained and non-blue.
+The `0.1.0-dev.6` New Moon presentation uses a collapsible file-first sidebar with Open/Reload, compact open-document entries, and the active document's native heading outline. A quiet breadcrumb header with Windows captions frames a broad document canvas. Tables have graphite headers and restrained horizontal/vertical separators; inline code has subtle graphite backgrounds; fences remain one coherent native frame. True percentage zoom scales native document layout while retaining selection and decoded images. Syntax colors remain restrained and non-blue.
 
 Moonmark is file-oriented rather than vault-oriented: it reads an ordinary Markdown file and releases the read handle. Relative images resolve from that document; valid parent, absolute, and `file:///` paths are allowed after canonicalization. Remote images remain disabled.
 
@@ -57,6 +57,6 @@ Assemble the measured Windows portable folder and ZIP with:
 pwsh -File scripts/package_windows.ps1
 ```
 
-See [architecture](docs/ARCHITECTURE.md), [renderer](docs/NATIVE_RENDERER.md), [images](docs/IMAGE_PIPELINE.md), [window behavior](docs/WINDOW_FRAME.md), [building](docs/BUILDING.md), [packaging](docs/PACKAGING.md), and [Qt licensing](docs/QT_LICENSING.md).
+See [architecture](docs/ARCHITECTURE.md), [renderer](docs/NATIVE_RENDERER.md), [images](docs/IMAGE_PIPELINE.md), [window behavior](docs/WINDOW_FRAME.md), [building](docs/BUILDING.md), [packaging](docs/PACKAGING.md), [dev.6 validation](docs/DEV6_VALIDATION.md), and [Qt licensing](docs/QT_LICENSING.md).
 
 Moonmark source is licensed under [GPL-3.0-only](LICENSE). Official branding is covered separately by [BRANDING.md](BRANDING.md). Review the [dependency license audit](docs/DEPENDENCY_LICENSE_AUDIT.md), [third-party notices](THIRD_PARTY_NOTICES.txt), and [roadmap](ROADMAP.md) before distribution work.

@@ -36,7 +36,7 @@ cargo build --release
 
 `build.rs` discovers Qt, compiles the C++20 adapter with warnings enabled, links Qt dynamically, embeds the Windows icon, and stages Qt DLLs/plugins/assets beside Cargo's executable. Build failure on either language fails Cargo.
 
-Moonmark development milestones use prerelease versions such as `0.1.0-dev.1`, `0.1.0-dev.2`, `0.1.0-dev.3`, and `0.1.0-dev.4`. During milestone work, each coherent source, UI, test, or documentation change receives its own descriptive commit before unrelated work begins. Commits are not squashed merely to shorten history, and pushing still requires separate explicit user approval.
+Moonmark development milestones use prerelease versions such as `0.1.0-dev.4`, `0.1.0-dev.5`, and `0.1.0-dev.6`. During milestone work, each coherent source, UI, test, or documentation change receives its own descriptive commit before unrelated work begins. Commits are not squashed merely to shorten history, and pushing still requires separate explicit user approval.
 
 ## Fixtures and benchmarks
 
@@ -61,8 +61,11 @@ Focused dev.6 checks:
 ```powershell
 cargo run -- --smoke-plaintext fixtures\text\literal.txt
 cargo run -- --smoke-multidoc fixtures\code-block-quality.md fixtures\text\literal.txt
+cargo run -- --smoke-motion fixtures\compatibility\all-features.md
 cargo run -- --smoke-navigation fixtures\compatibility\all-features.md
 ```
+
+The native test suite also creates temporary Markdown/plain-text files to verify that a background document's file watcher reloads only its own retained session.
 
 After a Release build, `pwsh -File tools/render_performance.ps1` runs native geometry, zoom, and image-stress checks. Set process variable `MOONMARK_PROFILE=1` for format/layout, worker queue/decode, and Qt delivery phase timings. `interactive_us` measures the zoom action; `painted_us` includes synchronous viewport repaint; `elapsed_us` additionally includes exhaustive format/text verification. Compare like-for-like Release runs without concurrent builds. The image `completion_ms` excludes the subsequent zoom verification.
 
