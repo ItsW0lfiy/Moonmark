@@ -22,8 +22,9 @@ try {
     Copy-Item -LiteralPath 'assets/branding/moonmark-symbol.png' -Destination (Join-Path $packageRoot 'assets/branding')
     Copy-Item -LiteralPath 'assets/deployment/qt.conf' -Destination (Join-Path $packageRoot 'qt.conf')
     Copy-Item -LiteralPath 'THIRD_PARTY_NOTICES.txt' -Destination $packageRoot
+    Copy-Item -LiteralPath 'LICENSE' -Destination $packageRoot
     Copy-Item -LiteralPath 'docs/licenses/Qt-LGPL-3.0-only.txt' -Destination (Join-Path $packageRoot 'licenses')
-    Copy-Item -LiteralPath 'docs/licenses/Qt-GPL-3.0-only.txt' -Destination (Join-Path $packageRoot 'licenses')
+    Copy-Item -LiteralPath 'LICENSE' -Destination (Join-Path $packageRoot 'licenses/Qt-GPL-3.0-only.txt')
 
     $redistRoots = @(
         'C:/Program Files/Microsoft Visual Studio/18/Insiders/VC/Redist/MSVC',

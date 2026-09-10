@@ -14,6 +14,8 @@ The portable folder contains:
 
 This ZIP is the current practical portable architecture. It needs no .NET, JVM, Node.js, browser engine, or separately installed Qt. It uses normal Windows system libraries; including app-local MSVC CRT DLLs avoids asking users to install the Visual C++ Redistributable separately.
 
+The Qt SDK, Rust toolchain, Cargo, MSVC compiler, and Windows SDK are build-time requirements only. Normal users receive the executable, exact Qt DLLs/plugins, app-local CRT where needed, assets, notices, and license texts. The portable edition runs directly from its extracted directory; the future installer will install essentially the same payload rather than bootstrap a development SDK or language runtime.
+
 An installer should deploy the same files, then add approved shortcuts, uninstall metadata, and file associations. Installer technology has not been selected, so no installer is built in this milestone.
 
 A true single executable requires a separate static Qt build and a deliberate Qt licensing decision. It was not built. Under LGPLv3, static distribution adds relinking/application-object and installation-information obligations and may affect whether the application remains merely a work using the library. Dynamic Qt is the safer current packaging choice; legal review and Moonmark's own license decision remain required before public distribution.

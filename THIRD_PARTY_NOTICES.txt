@@ -2,8 +2,9 @@ Moonmark uses Qt 6.11.2 Core, Gui, and Widgets dynamically.
 
 Qt is Copyright (C) The Qt Company Ltd. and other contributors. These Qt components are available under commercial terms or the GNU Lesser General Public License version 3 / GNU General Public License version 3. Copies of those license texts are included in this package.
 
+Moonmark is Copyright (C) 2026 ItsW0lfiy and is distributed under the GNU General Public License version 3 only. See LICENSE.
+
 This development package is not approved for public distribution. Before release, the distributor must complete a release-specific Qt/third-party license audit and provide the complete corresponding Qt source (including any modifications) or a compliant written offer controlled by the distributor, along with all other required notices and installation information.
 
 Qt licensing information: https://www.qt.io/licensing/
 Qt 6.11.2 source: https://download.qt.io/official_releases/qt/6.11/6.11.2/single/
-
