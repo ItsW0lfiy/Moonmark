@@ -721,7 +721,12 @@ protected:
                                  origin.y() + line.y() + line.ascent() - metrics.ascent(),
                                  std::abs(x2 - x1), metrics.height());
                 QPainterPath outer;
-                outer.addRoundedRect(ink.adjusted(-padding, -1, padding, 1), padding + 1, padding + 1);
+                // QTextLayout reports slightly different vertical ink boxes for
+                // ordinary blocks, list blocks, and table cells. Extending those
+                // boxes vertically produced a one-pixel underline/edge in prose.
+                // Keep Qt's native character background vertically authoritative
+                // and paint only rounded horizontal breathing room.
+                outer.addRoundedRect(ink.adjusted(-padding, 0, padding, 0), padding, padding);
                 QPainterPath native_text;
                 native_text.addRect(ink);
                 // Extend only the native character background. Never repaint glyphs or
