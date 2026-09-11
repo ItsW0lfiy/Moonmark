@@ -34,6 +34,17 @@ fn run_smoke_many(mode: &str, fixture_names: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+fn numeric_metric(output: &str, name: &str) -> u64 {
+    output
+        .split_whitespace()
+        .find_map(|field| {
+            field
+                .strip_prefix(&format!("{name}="))
+                .and_then(|value| value.parse().ok())
+        })
+        .unwrap_or_else(|| panic!("missing numeric metric {name} in {output}"))
+}
+
 #[test]
 fn qt_frontend_smoke_matrix() {
     let output = run_smoke("--smoke-image-geometry", "image-layout-regression.md");
@@ -47,11 +58,16 @@ fn qt_frontend_smoke_matrix() {
     assert!(output.contains("counters=stable"), "{output}");
     assert!(output.contains("partial_wheel=ok"), "{output}");
     assert!(output.contains("cancelled=ok"), "{output}");
+    assert!(output.contains("pixel=direct home=direct end=direct"), "{output}");
 
     let output = run_smoke("--smoke-scroll-profile", "generated/large-text.md");
     assert!(output.contains("scroll_profile=ok"), "{output}");
     assert!(output.contains("paint_interval_ms_p50="), "{output}");
     assert!(output.contains("over_50="), "{output}");
+    let controller_frames = numeric_metric(&output, "controller_frames");
+    let image_scans = numeric_metric(&output, "image_scans");
+    assert!(controller_frames > 20, "{output}");
+    assert!(image_scans * 2 < controller_frames, "{output}");
 
     let output = run_smoke("--smoke-plaintext", "text/literal.txt");
     assert!(output.contains("plaintext=ok"), "{output}");

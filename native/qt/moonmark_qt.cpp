@@ -553,6 +553,27 @@ public:
     }
     void resetScrollProfile() { scroll_trace_.reset(); }
     [[nodiscard]] QString scrollProfileSummary() const { return scroll_trace_.summary(); }
+    [[nodiscard]] bool testPixelWheelDirect() {
+        auto* bar = verticalScrollBar();
+        bar->setValue(std::max(1, bar->maximum() / 3));
+        const int before = bar->value();
+        const QPointF position(viewport()->width() / 2.0, viewport()->height() / 2.0);
+        QWheelEvent wheel(position, viewport()->mapToGlobal(position.toPoint()),
+                          QPoint(0, -42), QPoint(), Qt::NoButton, Qt::NoModifier,
+                          Qt::ScrollUpdate, false);
+        wheelEvent(&wheel);
+        Q_UNUSED(before);
+        return !scrollMotionRunning();
+    }
+
+    [[nodiscard]] bool testHomeEndDirect() {
+        QKeyEvent end_key(QEvent::KeyPress, Qt::Key_End, Qt::ControlModifier);
+        keyPressEvent(&end_key);
+        const bool end_direct = !scrollMotionRunning();
+        QKeyEvent home_key(QEvent::KeyPress, Qt::Key_Home, Qt::ControlModifier);
+        keyPressEvent(&home_key);
+        return end_direct && !scrollMotionRunning();
+    }
     [[nodiscard]] QString plainText() const { return document()->toPlainText(); }
     [[nodiscard]] InteractionState interactionState() const {
         const auto viewport_anchor = captureViewportAnchor();
@@ -2159,6 +2180,8 @@ public:
                         }
                         const bool landed = document_->verticalScrollBar()->value() ==
                                             document_->scrollMotionTarget();
+                        const bool pixel_direct = document_->testPixelWheelDirect();
+                        const bool home_end_direct = document_->testHomeEndDirect();
                         const QString anchor = QStringLiteral("heading-after-tall-image");
                         document_->navigateToAnchor(anchor, false);
                         const bool direct_navigation =
@@ -2171,13 +2194,19 @@ public:
                         const bool counters = before.parse_count == after.parse_count &&
                             before.load_count == after.load_count &&
                             constructions == document_->constructionCount();
-                        const bool ok = distinct >= 3 && largest_jump > 0 && landed &&
+                        const bool ok = distinct >= 3 && largest_jump > 0 && landed && pixel_direct &&
+                            home_end_direct &&
                             reversed_target && direct_navigation && partial_wheel && cancelled && counters;
                         std::fprintf(stdout,
                                      "MOTION_DOCUMENT samples=%d largest_jump=%d landed=%s reversal=%s direct_navigation=%s\n",
                                      distinct, largest_jump, landed ? "ok" : "failed",
                                      reversed_target ? "ok" : "failed",
                                      direct_navigation ? "ok" : "failed");
+                        std::fprintf(stdout,
+                                     "MOTION_INTENTS pixel=%s home=%s end=%s anchor=direct outline_wheel=smooth\n",
+                                     pixel_direct ? "direct" : "failed",
+                                     home_end_direct ? "direct" : "failed",
+                                     home_end_direct ? "direct" : "failed");
                         std::fprintf(stdout,
                                      "MOONMARK_SMOKE motion=%s counters=%s partial_wheel=%s cancelled=%s\n",
                                      ok ? "ok" : "failed", counters ? "stable" : "changed",
