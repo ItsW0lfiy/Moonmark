@@ -641,7 +641,7 @@ public:
         }
         const int distance = std::abs(*destination - verticalScrollBar()->value());
         scroll_controller_.animateTo(*destination, animate ? navigationDuration(distance) : 0,
-                                     QEasingCurve::InOutCubic);
+                                     QEasingCurve::InOutSine);
         navigation_controller_start_us_ = phase.nsecsElapsed() / 1000 -
                                           navigation_lookup_us_ - navigation_geometry_us_;
     }
@@ -972,7 +972,9 @@ private:
         if (reducedMotion()) return 0;
         const double viewports = static_cast<double>(distance) /
                                  std::max(1, viewport()->height());
-        return std::clamp(static_cast<int>(140.0 + 100.0 * std::sqrt(viewports)), 140, 800);
+        const int spatial_duration = static_cast<int>(220.0 + 180.0 * std::sqrt(viewports));
+        const int velocity_duration = static_cast<int>(std::ceil(distance * 1000.0 / 2400.0));
+        return std::clamp(std::max(spatial_duration, velocity_duration), 220, 2400);
     }
 
     [[nodiscard]] std::optional<int> anchorDestination(const QString& anchor) const {
@@ -1005,7 +1007,7 @@ private:
         if (*destination != scroll_controller_.targetValue()) ++navigation_retarget_count_;
         const int distance = std::abs(*destination - verticalScrollBar()->value());
         scroll_controller_.retargetTo(*destination, navigationDuration(distance),
-                                      QEasingCurve::InOutCubic);
+                                      QEasingCurve::InOutSine);
     }
 
     void settleNavigation() {
@@ -1014,7 +1016,7 @@ private:
         if (destination.has_value() && std::abs(*destination - verticalScrollBar()->value()) > 1) {
             const int distance = std::abs(*destination - verticalScrollBar()->value());
             scroll_controller_.retargetTo(*destination, navigationDuration(distance),
-                                          QEasingCurve::InOutCubic);
+                                          QEasingCurve::InOutSine);
             return;
         }
         // Keep the semantic destination alive until image requests started by this
@@ -1897,7 +1899,7 @@ public:
                     const int landing_y = document_->anchorViewportY(target);
                     const int landing_error = std::abs(landing_y - document_->navigationInset());
                     const bool temporal = distinct >= 4 && monotonic && travel > 0 &&
-                        largest_jump < std::max(64, travel / 3) &&
+                        largest_jump <= 28 &&
                         document_->verticalScrollBar()->value() == document_->scrollMotionTarget();
                     const bool landing = landing_error <= 3;
                     const bool latency = document_->navigationLookupMicros() >= 0 &&
@@ -1967,6 +1969,7 @@ public:
                             sidebar_monotonic &= delta >= 0;
                         }
                         const bool sidebar_motion = sidebar_distinct >= 3 && sidebar_monotonic &&
+                            sidebar_largest_jump <= 28 &&
                             sidebar_->outlineScrollValue() == sidebar_->outlineScrollTarget() &&
                             sidebar_->outlineAnchorVisible(QStringLiteral("end-clamped-heading"));
                         const auto sidebar_first_change_us = sidebar_->outlineFirstChangeMicros();

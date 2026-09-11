@@ -44,6 +44,7 @@ private:
     int start_value_ = 0;
     int target_value_ = 0;
     int duration_ms_ = 0;
+    int maximum_step_ = 28;
     qint64 first_change_us_ = -1;
 };
 

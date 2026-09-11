@@ -6,7 +6,10 @@
 namespace moonmark::qt {
 
 SmoothScrollController::SmoothScrollController(QAbstractSlider* slider) : slider_(slider) {
-    timer_.setInterval(8);
+    // One logical update per normal display frame. Together with the bounded
+    // step below this prevents event-loop stalls or long journeys from turning
+    // a nominal animation into a handful of large scrollbar teleports.
+    timer_.setInterval(16);
     timer_.setTimerType(Qt::PreciseTimer);
     QObject::connect(&timer_, &QTimer::timeout, &timer_, [this] { tick(); });
     if (slider_) {
@@ -89,16 +92,18 @@ void SmoothScrollController::tick() {
                                          static_cast<qreal>(duration_ms_),
                                      0.0, 1.0);
     const qreal eased = easing_.valueForProgress(progress);
-    const int next = progress >= 1.0
+    const int desired = progress >= 1.0
         ? target_value_
         : static_cast<int>(std::round(start_value_ + (target_value_ - start_value_) * eased));
+    const int remaining = desired - slider_->value();
+    const int next = slider_->value() + std::clamp(remaining, -maximum_step_, maximum_step_);
     if (next != slider_->value()) {
         slider_->setValue(next);
         frame_values_.push_back(next);
         if (first_change_us_ < 0) first_change_us_ = request_elapsed_.nsecsElapsed() / 1000;
         if (value_changed) value_changed(next);
     }
-    if (progress >= 1.0) {
+    if (next == target_value_) {
         timer_.stop();
         if (finished) finished();
     }

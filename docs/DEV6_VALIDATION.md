@@ -30,10 +30,10 @@ Release measurements are local samples, not hard CI thresholds.
 | --- | --- |
 | Retained two-document switch, 40 alternations | 323 microseconds average |
 | Direct anchor lookup | 2–5 microseconds in repeated local motion smokes |
-| First scrollbar change | 29.2–32.5 ms from click request in local Debug motion smokes |
-| First painted motion frame | 33.7–37.8 ms from click request in local Debug motion smokes |
-| Long heading motion | 56–58 distinct samples over 1,567 px; largest observed step 103–115 px; monotonic |
-| Outline reveal | 31 distinct samples; 7.8–8.5 ms first change; monotonic |
+| First scrollbar change | 33.2 ms in Release; 47.0 ms in a cold local Debug smoke |
+| First painted motion frame | 36.4 ms in Release; 54.5 ms in a cold local Debug smoke |
+| Long heading motion | 61–63 distinct samples over 1,567 px; maximum step hard-limited to 28 logical px; monotonic |
+| Outline reveal | 17 distinct samples; 16.1–17.0 ms first change; maximum step 28 px; monotonic |
 | Sidebar-width reversal | 12 samples; largest observed step 47–49 px; reversed without resetting to an endpoint |
 | 650,000-character literal text construction, Release | 485,811 microseconds; parse count 0 |
 | Image stress semantic parse, 20 runs | p50 0.591 ms; p95 0.824 ms |
