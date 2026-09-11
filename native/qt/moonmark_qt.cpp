@@ -2080,9 +2080,17 @@ public:
                     burst->stop();
                     burst->deleteLater();
                     QTimer::singleShot(1200, this, [this] {
-                        std::fprintf(stdout, "%s\n",
-                                     document_->scrollProfileSummary().toUtf8().constData());
+                        const auto summary = document_->scrollProfileSummary().toUtf8();
+                        std::fprintf(stdout, "%s\n", summary.constData());
                         std::fprintf(stdout, "MOONMARK_SMOKE scroll_profile=ok\n");
+                        const auto output_path = qEnvironmentVariable("MOONMARK_SCROLL_PROFILE_OUTPUT");
+                        if (!output_path.isEmpty()) {
+                            QFile output(output_path);
+                            if (output.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                                output.write(summary);
+                                output.write("\nMOONMARK_SMOKE scroll_profile=ok\n");
+                            }
+                        }
                         std::fflush(stdout);
                         QCoreApplication::exit(0);
                     });
