@@ -58,7 +58,10 @@ fn qt_frontend_smoke_matrix() {
     assert!(output.contains("counters=stable"), "{output}");
     assert!(output.contains("partial_wheel=ok"), "{output}");
     assert!(output.contains("cancelled=ok"), "{output}");
-    assert!(output.contains("pixel=direct home=direct end=direct"), "{output}");
+    assert!(
+        output.contains("pixel=direct home=direct end=direct"),
+        "{output}"
+    );
 
     let output = run_smoke("--smoke-scroll-profile", "generated/large-text.md");
     assert!(output.contains("scroll_profile=ok"), "{output}");
