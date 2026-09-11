@@ -42,9 +42,11 @@ fn qt_frontend_smoke_matrix() {
     assert!(output.contains("selection_copy=ok"), "{output}");
     let output = run_smoke("--smoke-navigation", "concept-presentation.md");
     assert!(output.contains("navigation=ok"), "{output}");
-    let output = run_smoke("--smoke-motion", "compatibility/all-features.md");
+    let output = run_smoke("--smoke-motion", "navigation-motion.md");
     assert!(output.contains("motion=ok"), "{output}");
     assert!(output.contains("counters=stable"), "{output}");
+    assert!(output.contains("partial_wheel=ok"), "{output}");
+    assert!(output.contains("cancelled=ok"), "{output}");
 
     let output = run_smoke("--smoke-plaintext", "text/literal.txt");
     assert!(output.contains("plaintext=ok"), "{output}");
