@@ -433,11 +433,13 @@ public:
     }
     [[nodiscard]] bool testSelectionCopy() {
         auto* previous = snapshotClipboard();
+        last_copy_text_.clear();
         QKeyEvent select_event(QEvent::KeyPress, Qt::Key_A, Qt::ControlModifier);
         QApplication::sendEvent(this, &select_event);
         QKeyEvent copy_event(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
         QApplication::sendEvent(this, &copy_event);
-        const auto copied = QGuiApplication::clipboard()->text();
+        const auto copied = last_copy_text_;
+        bool clipboard_available = QGuiApplication::clipboard()->text() == copied;
         bool inline_ok = true;
         int inline_count = 0;
         for (auto block = document()->begin(); block.isValid(); block = block.next()) {
@@ -449,11 +451,14 @@ public:
                 span.setPosition(fragment.position() + fragment.length(), QTextCursor::KeepAnchor);
                 setTextCursor(span);
                 QApplication::sendEvent(this, &copy_event);
-                inline_ok &= QGuiApplication::clipboard()->text() == fragment.text();
+                inline_ok &= last_copy_text_ == fragment.text();
+                clipboard_available &= QGuiApplication::clipboard()->text() == last_copy_text_;
                 ++inline_count;
             }
         }
-        std::fprintf(stdout, "INLINE_COPY spans=%d exact=%s\n", inline_count, inline_ok ? "ok" : "failed");
+        std::fprintf(stdout, "INLINE_COPY spans=%d exact=%s clipboard=%s\n", inline_count,
+                     inline_ok ? "ok" : "failed",
+                     clipboard_available ? "verified" : "unavailable");
         QGuiApplication::clipboard()->setMimeData(previous);
         return inline_ok && copied.size() > 40 && !copied.contains(QChar::ObjectReplacementCharacter) &&
                !copied.contains(QChar(0xFDD0)) && !copied.contains(QChar(0xFDD1));
@@ -477,7 +482,7 @@ public:
                                     Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
                 QApplication::sendEvent(viewport(), &press);
                 QApplication::sendEvent(viewport(), &release);
-                const bool copied = QGuiApplication::clipboard()->text() == code_sources_.front();
+                const bool copied = last_copy_text_ == code_sources_.front();
                 if (!copied) {
                     std::fprintf(stdout, "COPY_DIAGNOSTIC press=%d cursor=%d selected=%d anchor=%s clipboard_length=%lld expected_length=%lld\n",
                                  press_position_, textCursor().position(), textCursor().hasSelection(),
@@ -873,7 +878,8 @@ protected:
         if (anchor.startsWith(QStringLiteral("moonmark-copy:"))) {
             const auto index = anchor.sliced(QStringLiteral("moonmark-copy:").size()).toInt();
             if (index >= 0 && index < static_cast<int>(code_sources_.size())) {
-                QGuiApplication::clipboard()->setText(code_sources_[static_cast<std::size_t>(index)]);
+                last_copy_text_ = code_sources_[static_cast<std::size_t>(index)];
+                QGuiApplication::clipboard()->setText(last_copy_text_);
             }
         } else if (anchor.startsWith(QLatin1Char('#'))) {
             navigateToAnchor(QUrl::fromPercentEncoding(anchor.sliced(1).toUtf8()));
@@ -944,6 +950,7 @@ protected:
             selected.remove(QChar(0xFDD0));
             selected.remove(QChar(0xFDD1));
             selected.remove(QChar(0x200B));
+            last_copy_text_ = selected;
             QGuiApplication::clipboard()->setText(selected);
             event->accept();
             return;
@@ -1687,6 +1694,7 @@ private:
     std::vector<ImageOccurrence> image_occurrences_;
     std::unordered_map<std::uint32_t, bool> image_requested_;
     std::vector<QString> code_sources_;
+    QString last_copy_text_;
     std::vector<QPointer<QTextFrame>> code_frames_;
     QJsonObject settings_;
     QJsonObject metrics_;
