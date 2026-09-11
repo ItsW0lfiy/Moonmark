@@ -1,7 +1,5 @@
 #include "smooth_scroll_controller.h"
 
-#include <QWindow>
-
 #include <algorithm>
 #include <cmath>
 
@@ -126,9 +124,6 @@ void SmoothScrollController::tick() {
     }
     if (position_ == target_ && velocity_ == 0.0) {
         finish();
-    } else {
-        if (auto* window = slider_->window() ? slider_->window()->windowHandle() : nullptr)
-            window->requestUpdate();
     }
 }
 

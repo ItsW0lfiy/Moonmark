@@ -299,10 +299,12 @@ public:
         scrollbar_write_us_.clear();
         value_change_us_.clear();
         image_scan_us_.clear();
+        image_delivery_us_.clear();
         wheel_events_ = 0;
         first_input_us_ = -1;
         first_paint_after_input_us_ = -1;
         last_paint_us_ = -1;
+        scroll_change_pending_ = false;
         clock_.restart();
     }
 
@@ -318,14 +320,22 @@ public:
     void recordScrollbarWrite(qint64 duration_us) {
         if (enabled_) append(scrollbar_write_us_, duration_us);
     }
+    void recordScrollChange() {
+        if (enabled_ && first_input_us_ >= 0) scroll_change_pending_ = true;
+    }
     void recordValueChange(qint64 duration_us) {
         if (enabled_) append(value_change_us_, duration_us);
     }
     void recordImageScan(qint64 duration_us) {
         if (enabled_) append(image_scan_us_, duration_us);
     }
+    void recordImageDelivery(qint64 duration_us) {
+        if (enabled_) append(image_delivery_us_, duration_us);
+    }
     void recordPaint(qint64 started_us, qint64 duration_us) {
         if (!enabled_) return;
+        if (!scroll_change_pending_) return;
+        scroll_change_pending_ = false;
         if (last_paint_us_ >= 0) append(paint_intervals_us_, started_us - last_paint_us_);
         last_paint_us_ = started_us;
         append(paint_costs_us_, duration_us);
@@ -340,13 +350,15 @@ public:
         const auto writes = statistics(scrollbar_write_us_);
         const auto values = statistics(value_change_us_);
         const auto scans = statistics(image_scan_us_);
+        const auto deliveries = statistics(image_delivery_us_);
         return QStringLiteral(
                    "SCROLL_FRAME_PROFILE wheel=%1 controller_frames=%2 paints=%3 "
                    "input_to_first_paint_us=%4 paint_interval_ms_p50=%5 p95=%6 p99=%7 worst=%8 "
                    "over_16_67=%9 over_25=%10 over_33_3=%11 over_50=%12 "
                    "paint_cost_us_p50=%13 p95=%14 p99=%15 worst=%16 "
                    "scrollbar_write_us_p95=%17 value_change_us_p95=%18 "
-                   "image_scans=%19 image_scan_us_p95=%20")
+                   "image_scans=%19 image_scan_us_p95=%20 image_deliveries=%21 "
+                   "image_delivery_us_p95=%22")
             .arg(wheel_events_)
             .arg(controller_intervals_us_.size())
             .arg(paint_costs_us_.size())
@@ -361,7 +373,8 @@ public:
             .arg(countAbove(paint_intervals_us_, 50'000))
             .arg(costs.p50).arg(costs.p95).arg(costs.p99).arg(costs.worst)
             .arg(writes.p95).arg(values.p95)
-            .arg(image_scan_us_.size()).arg(scans.p95);
+            .arg(image_scan_us_.size()).arg(scans.p95)
+            .arg(image_delivery_us_.size()).arg(deliveries.p95);
     }
 
 private:
@@ -393,10 +406,12 @@ private:
     QVector<qint64> scrollbar_write_us_;
     QVector<qint64> value_change_us_;
     QVector<qint64> image_scan_us_;
+    QVector<qint64> image_delivery_us_;
     int wheel_events_ = 0;
     qint64 first_input_us_ = -1;
     qint64 first_paint_after_input_us_ = -1;
     qint64 last_paint_us_ = -1;
+    bool scroll_change_pending_ = false;
 };
 
 class DocumentView final : public QTextEdit {
@@ -433,6 +448,7 @@ public:
         QObject::connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
             QElapsedTimer value_change;
             value_change.start();
+            scroll_trace_.recordScrollChange();
             scheduleImagePrefetch();
             scroll_trace_.recordValueChange(value_change.nsecsElapsed() / 1000);
         });
@@ -1088,8 +1104,13 @@ protected:
             wheel_fraction_ += scaled;
             const double movement = std::trunc(wheel_fraction_);
             wheel_fraction_ -= movement;
-            scroll_controller_.addWheelDistance(movement == 0.0 ? std::copysign(1.0, scaled)
-                                                                 : movement);
+            const double distance = movement == 0.0 ? std::copysign(1.0, scaled) : movement;
+            if (reducedMotion()) {
+                scroll_controller_.moveDirectlyTo(verticalScrollBar()->value() +
+                                                  static_cast<int>(std::lround(distance)));
+            } else {
+                scroll_controller_.addWheelDistance(distance);
+            }
             event->accept();
             return;
         }
@@ -1740,6 +1761,9 @@ private:
     }
 
     void pollImages() {
+        // Completed decodes can wait briefly; applying QTextImageFormats forces
+        // native relayout and must not consume the rapid-scroll frame budget.
+        if (scroll_controller_.isRunning()) return;
         QElapsedTimer profile;
         profile.start();
         qint64 copy_us = 0;
@@ -1804,6 +1828,7 @@ private:
             if (!navigation_anchor_.isEmpty()) ++navigation_image_retarget_count_;
             scheduleNavigationRetarget();
             viewport()->update();
+            scroll_trace_.recordImageDelivery(profile.nsecsElapsed() / 1000);
             if (qEnvironmentVariableIsSet("MOONMARK_PROFILE"))
                 std::fprintf(stdout, "IMAGE_DELIVERY results=%d copy_us=%lld geometry_us=%lld total_us=%lld\n",
                              count, static_cast<long long>(copy_us), static_cast<long long>(geometry_us),

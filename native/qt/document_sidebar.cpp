@@ -67,7 +67,13 @@ protected:
             wheel_fraction_ += scaled;
             const double movement = std::trunc(wheel_fraction_);
             wheel_fraction_ -= movement;
-            scrolling_.addWheelDistance(movement == 0.0 ? std::copysign(1.0, scaled) : movement);
+            const double distance = movement == 0.0 ? std::copysign(1.0, scaled) : movement;
+            if (qEnvironmentVariable("MOONMARK_REDUCED_MOTION") == QStringLiteral("1")) {
+                scrolling_.moveDirectlyTo(verticalScrollBar()->value() +
+                                          static_cast<int>(std::lround(distance)));
+            } else {
+                scrolling_.addWheelDistance(distance);
+            }
             event->accept();
             return;
         }
