@@ -48,6 +48,11 @@ fn qt_frontend_smoke_matrix() {
     assert!(output.contains("partial_wheel=ok"), "{output}");
     assert!(output.contains("cancelled=ok"), "{output}");
 
+    let output = run_smoke("--smoke-scroll-profile", "generated/large-text.md");
+    assert!(output.contains("scroll_profile=ok"), "{output}");
+    assert!(output.contains("paint_interval_ms_p50="), "{output}");
+    assert!(output.contains("over_50="), "{output}");
+
     let output = run_smoke("--smoke-plaintext", "text/literal.txt");
     assert!(output.contains("plaintext=ok"), "{output}");
     assert!(output.contains("parse_count=0"), "{output}");

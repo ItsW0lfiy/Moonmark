@@ -286,12 +286,127 @@ private:
     QString full_text_;
 };
 
+class ScrollFrameTrace final {
+public:
+    ScrollFrameTrace() : enabled_(qEnvironmentVariableIsSet("MOONMARK_SCROLL_TRACE")) {
+        clock_.start();
+    }
+
+    void reset() {
+        controller_intervals_us_.clear();
+        paint_intervals_us_.clear();
+        paint_costs_us_.clear();
+        scrollbar_write_us_.clear();
+        value_change_us_.clear();
+        image_scan_us_.clear();
+        wheel_events_ = 0;
+        first_input_us_ = -1;
+        first_paint_after_input_us_ = -1;
+        last_paint_us_ = -1;
+        clock_.restart();
+    }
+
+    [[nodiscard]] bool enabled() const { return enabled_; }
+    void recordWheel() {
+        if (!enabled_) return;
+        ++wheel_events_;
+        if (first_input_us_ < 0) first_input_us_ = now();
+    }
+    void recordControllerFrame(double dt_seconds) {
+        if (enabled_) append(controller_intervals_us_, static_cast<qint64>(dt_seconds * 1'000'000));
+    }
+    void recordScrollbarWrite(qint64 duration_us) {
+        if (enabled_) append(scrollbar_write_us_, duration_us);
+    }
+    void recordValueChange(qint64 duration_us) {
+        if (enabled_) append(value_change_us_, duration_us);
+    }
+    void recordImageScan(qint64 duration_us) {
+        if (enabled_) append(image_scan_us_, duration_us);
+    }
+    void recordPaint(qint64 started_us, qint64 duration_us) {
+        if (!enabled_) return;
+        if (last_paint_us_ >= 0) append(paint_intervals_us_, started_us - last_paint_us_);
+        last_paint_us_ = started_us;
+        append(paint_costs_us_, duration_us);
+        if (first_input_us_ >= 0 && first_paint_after_input_us_ < 0)
+            first_paint_after_input_us_ = started_us - first_input_us_;
+    }
+    [[nodiscard]] qint64 now() const { return clock_.nsecsElapsed() / 1000; }
+
+    [[nodiscard]] QString summary() const {
+        const auto intervals = statistics(paint_intervals_us_);
+        const auto costs = statistics(paint_costs_us_);
+        const auto writes = statistics(scrollbar_write_us_);
+        const auto values = statistics(value_change_us_);
+        const auto scans = statistics(image_scan_us_);
+        return QStringLiteral(
+                   "SCROLL_FRAME_PROFILE wheel=%1 controller_frames=%2 paints=%3 "
+                   "input_to_first_paint_us=%4 paint_interval_ms_p50=%5 p95=%6 p99=%7 worst=%8 "
+                   "over_16_67=%9 over_25=%10 over_33_3=%11 over_50=%12 "
+                   "paint_cost_us_p50=%13 p95=%14 p99=%15 worst=%16 "
+                   "scrollbar_write_us_p95=%17 value_change_us_p95=%18 "
+                   "image_scans=%19 image_scan_us_p95=%20")
+            .arg(wheel_events_)
+            .arg(controller_intervals_us_.size())
+            .arg(paint_costs_us_.size())
+            .arg(first_paint_after_input_us_)
+            .arg(intervals.p50 / 1000.0, 0, 'f', 2)
+            .arg(intervals.p95 / 1000.0, 0, 'f', 2)
+            .arg(intervals.p99 / 1000.0, 0, 'f', 2)
+            .arg(intervals.worst / 1000.0, 0, 'f', 2)
+            .arg(countAbove(paint_intervals_us_, 16'670))
+            .arg(countAbove(paint_intervals_us_, 25'000))
+            .arg(countAbove(paint_intervals_us_, 33'300))
+            .arg(countAbove(paint_intervals_us_, 50'000))
+            .arg(costs.p50).arg(costs.p95).arg(costs.p99).arg(costs.worst)
+            .arg(writes.p95).arg(values.p95)
+            .arg(image_scan_us_.size()).arg(scans.p95);
+    }
+
+private:
+    struct Stats { qint64 p50 = 0; qint64 p95 = 0; qint64 p99 = 0; qint64 worst = 0; };
+    static void append(QVector<qint64>& values, qint64 value) {
+        constexpr qsizetype capacity = 4096;
+        if (values.size() == capacity) values.remove(0, capacity / 4);
+        values.push_back(value);
+    }
+    static Stats statistics(QVector<qint64> values) {
+        if (values.isEmpty()) return {};
+        std::sort(values.begin(), values.end());
+        const auto at = [&values](double quantile) {
+            const auto index = static_cast<qsizetype>(std::ceil((values.size() - 1) * quantile));
+            return values.at(std::clamp<qsizetype>(index, 0, values.size() - 1));
+        };
+        return {at(0.50), at(0.95), at(0.99), values.back()};
+    }
+    static qsizetype countAbove(const QVector<qint64>& values, qint64 threshold) {
+        return std::count_if(values.cbegin(), values.cend(),
+                             [threshold](qint64 value) { return value > threshold; });
+    }
+
+    bool enabled_ = false;
+    QElapsedTimer clock_;
+    QVector<qint64> controller_intervals_us_;
+    QVector<qint64> paint_intervals_us_;
+    QVector<qint64> paint_costs_us_;
+    QVector<qint64> scrollbar_write_us_;
+    QVector<qint64> value_change_us_;
+    QVector<qint64> image_scan_us_;
+    int wheel_events_ = 0;
+    qint64 first_input_us_ = -1;
+    qint64 first_paint_after_input_us_ = -1;
+    qint64 last_paint_us_ = -1;
+};
+
 class DocumentView final : public QTextEdit {
 public:
     struct InteractionState {
         int scroll = 0;
         int position = 0;
         int anchor = 0;
+        int viewport_position = 0;
+        int viewport_offset = 0;
     };
 
     explicit DocumentView(const MoonmarkApiTable* api, void* backend, QWidget* parent = nullptr)
@@ -312,8 +427,15 @@ public:
 
         image_poll_.setInterval(15);
         QObject::connect(&image_poll_, &QTimer::timeout, this, [this] { pollImages(); });
-        QObject::connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
+        image_prefetch_.setSingleShot(true);
+        QObject::connect(&image_prefetch_, &QTimer::timeout, this,
                          [this] { queueVisibleImages(); });
+        QObject::connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
+            QElapsedTimer value_change;
+            value_change.start();
+            scheduleImagePrefetch();
+            scroll_trace_.recordValueChange(value_change.nsecsElapsed() / 1000);
+        });
         QObject::connect(verticalScrollBar(), &QScrollBar::sliderPressed, this,
                          [this] { cancelScrollMotion(); });
 
@@ -321,7 +443,16 @@ public:
             if (navigation_first_change_us_ < 0 && navigation_request_elapsed_.isValid())
                 navigation_first_change_us_ = navigation_request_elapsed_.nsecsElapsed() / 1000;
         };
-        scroll_controller_.finished = [this] { settleNavigation(); };
+        scroll_controller_.finished = [this] {
+            scheduleImagePrefetch(true);
+            settleNavigation();
+        };
+        scroll_controller_.frame_sampled = [this](double dt, double, double) {
+            scroll_trace_.recordControllerFrame(dt);
+        };
+        scroll_controller_.scrollbar_write_measured = [this](qint64 duration_us) {
+            scroll_trace_.recordScrollbarWrite(duration_us);
+        };
 
         autoscroll_.setInterval(16);
         QObject::connect(&autoscroll_, &QTimer::timeout, this, [this] { autoScrollTick(); });
@@ -339,6 +470,8 @@ public:
         image_requested_.clear();
         code_sources_.clear();
         code_frames_.clear();
+        code_frame_bounds_.clear();
+        code_frame_bounds_dirty_ = true;
         anchor_positions_.clear();
         title_ = root.value("title").toString(QStringLiteral("Moonmark"));
         settings_ = root.value("settings").toObject();
@@ -392,6 +525,7 @@ public:
         QTimer::singleShot(0, this, [this] {
             verticalScrollBar()->setValue(0);
             queueVisibleImages();
+            invalidateCodeFrameBounds();
         });
     }
 
@@ -417,9 +551,13 @@ public:
                                                   return item.requested && !item.loaded && !item.failed;
                                               }));
     }
+    void resetScrollProfile() { scroll_trace_.reset(); }
+    [[nodiscard]] QString scrollProfileSummary() const { return scroll_trace_.summary(); }
     [[nodiscard]] QString plainText() const { return document()->toPlainText(); }
     [[nodiscard]] InteractionState interactionState() const {
-        return {verticalScrollBar()->value(), textCursor().position(), textCursor().anchor()};
+        const auto viewport_anchor = captureViewportAnchor();
+        return {verticalScrollBar()->value(), textCursor().position(), textCursor().anchor(),
+                viewport_anchor.position, viewport_anchor.offset};
     }
 
     void restoreInteractionState(const InteractionState& state) {
@@ -430,6 +568,8 @@ public:
         setTextCursor(cursor);
         verticalScrollBar()->setValue(std::clamp(state.scroll, verticalScrollBar()->minimum(),
                                                  verticalScrollBar()->maximum()));
+        restoreViewportAnchor({state.viewport_position, state.viewport_offset,
+                               state.scroll == verticalScrollBar()->minimum()});
     }
     [[nodiscard]] bool testSelectionCopy() {
         auto* previous = snapshotClipboard();
@@ -574,6 +714,7 @@ public:
         resizeLoadedImages();
         const auto images_us = profile.nsecsElapsed() / 1000;
         document()->setLayoutEnabled(true);
+        invalidateCodeFrameBounds();
         setTextCursor(selection);
         verticalScrollBar()->setValue(at_top ? 0 : verticalScrollBar()->value() +
                                         cursorRect(anchor).top() - anchor_y);
@@ -639,9 +780,9 @@ public:
             navigation_anchor_.clear();
             return;
         }
-        const int distance = std::abs(*destination - verticalScrollBar()->value());
-        scroll_controller_.animateTo(*destination, animate ? navigationDuration(distance) : 0,
-                                     QEasingCurve::InOutSine);
+        Q_UNUSED(animate);
+        scroll_controller_.moveDirectlyTo(*destination);
+        settleNavigation();
         navigation_controller_start_us_ = phase.nsecsElapsed() / 1000 -
                                           navigation_lookup_us_ - navigation_geometry_us_;
     }
@@ -705,6 +846,9 @@ public:
 
 protected:
     void paintEvent(QPaintEvent* event) override {
+        const qint64 paint_started_us = scroll_trace_.now();
+        QElapsedTimer paint_cost;
+        paint_cost.start();
         QTextEdit::paintEvent(event);
         if (navigation_first_change_us_ >= 0 && navigation_first_paint_us_ < 0 &&
             navigation_request_elapsed_.isValid()) {
@@ -735,6 +879,7 @@ protected:
                 painter.drawLine(x, first.top() - 3, x, bottom);
             }
         }
+        scroll_trace_.recordPaint(paint_started_us, paint_cost.nsecsElapsed() / 1000);
     }
 
     void paintInlineCodeEdges(QPainter& painter, const QTextBlock& block) const {
@@ -796,6 +941,7 @@ protected:
     }
 
     void paintCodeFrameCorners(QPainter& painter) const {
+        if (code_frame_bounds_dirty_) return;
         painter.save();
         painter.setRenderHint(QPainter::Antialiasing);
         painter.setPen(Qt::NoPen);
@@ -803,11 +949,16 @@ protected:
         painter.setClipRect(viewport()->rect());
         const QPointF scroll(horizontalScrollBar()->value(), verticalScrollBar()->value());
         const qreal radius = 7.0 * zoom_percent_ / 100.0;
-        for (const auto& frame : code_frames_) {
-            if (!frame) continue;
-            const QRectF bounds = document()->documentLayout()->frameBoundingRect(frame)
-                                  .translated(-scroll);
-            if (!bounds.intersects(viewport()->rect())) continue;
+        const qreal visible_top = verticalScrollBar()->value();
+        const qreal visible_bottom = visible_top + viewport()->height();
+        auto frame = std::lower_bound(code_frame_bounds_.cbegin(), code_frame_bounds_.cend(),
+                                      visible_top,
+                                      [](const CodeFrameBounds& item, qreal top) {
+                                          return item.bounds.bottom() < top;
+                                      });
+        for (; frame != code_frame_bounds_.cend() && frame->bounds.top() <= visible_bottom;
+             ++frame) {
+            const QRectF bounds = frame->bounds.translated(-scroll);
             QPainterPath square;
             square.addRect(bounds);
             QPainterPath rounded;
@@ -818,9 +969,12 @@ protected:
     }
 
     void resizeEvent(QResizeEvent* event) override {
+        const auto anchor = captureViewportAnchor();
         QTextEdit::resizeEvent(event);
         applyDocumentWidth();
         resizeLoadedImages();
+        restoreViewportAnchor(anchor);
+        invalidateCodeFrameBounds();
         scheduleNavigationRetarget();
         QTimer::singleShot(0, this, [this] { queueVisibleImages(); });
     }
@@ -904,21 +1058,17 @@ protected:
             return;
         }
         if (event->angleDelta().y() != 0) {
+            scroll_trace_.recordWheel();
             if (!navigation_anchor_.isEmpty()) cancelScrollMotion();
-            const int baseline = scroll_controller_.isRunning()
-                ? scroll_controller_.targetValue() : verticalScrollBar()->value();
+            const double wheel_step = std::max(80.0,
+                static_cast<double>(verticalScrollBar()->singleStep()) * 4.0);
             const double scaled = -static_cast<double>(event->angleDelta().y()) *
-                                  verticalScrollBar()->singleStep() * 4.0 / 120.0;
+                                  wheel_step / 120.0;
             wheel_fraction_ += scaled;
-            int movement = static_cast<int>(std::round(wheel_fraction_));
-            if (movement == 0) movement = scaled < 0 ? -1 : 1;
+            const double movement = std::trunc(wheel_fraction_);
             wheel_fraction_ -= movement;
-            const int destination = baseline + movement;
-            if (scroll_controller_.isRunning()) {
-                scroll_controller_.retargetTo(destination, 140, QEasingCurve::InOutQuad);
-            } else {
-                scroll_controller_.animateTo(destination, 140, QEasingCurve::InOutQuad);
-            }
+            scroll_controller_.addWheelDistance(movement == 0.0 ? std::copysign(1.0, scaled)
+                                                                 : movement);
             event->accept();
             return;
         }
@@ -968,15 +1118,6 @@ private:
         return qEnvironmentVariable("MOONMARK_REDUCED_MOTION") == QStringLiteral("1");
     }
 
-    [[nodiscard]] int navigationDuration(int distance) const {
-        if (reducedMotion()) return 0;
-        const double viewports = static_cast<double>(distance) /
-                                 std::max(1, viewport()->height());
-        const int spatial_duration = static_cast<int>(220.0 + 180.0 * std::sqrt(viewports));
-        const int velocity_duration = static_cast<int>(std::ceil(distance * 1000.0 / 2400.0));
-        return std::clamp(std::max(spatial_duration, velocity_duration), 220, 2400);
-    }
-
     [[nodiscard]] std::optional<int> anchorDestination(const QString& anchor) const {
         const auto found = anchor_positions_.constFind(anchor);
         if (found == anchor_positions_.cend()) return std::nullopt;
@@ -1003,21 +1144,16 @@ private:
             cancelScrollMotion();
             return;
         }
-        if (*destination == scroll_controller_.targetValue() && scroll_controller_.isRunning()) return;
-        if (*destination != scroll_controller_.targetValue()) ++navigation_retarget_count_;
-        const int distance = std::abs(*destination - verticalScrollBar()->value());
-        scroll_controller_.retargetTo(*destination, navigationDuration(distance),
-                                      QEasingCurve::InOutSine);
+        if (*destination == verticalScrollBar()->value()) return;
+        ++navigation_retarget_count_;
+        scroll_controller_.moveDirectlyTo(*destination);
     }
 
     void settleNavigation() {
         if (navigation_anchor_.isEmpty()) return;
         const auto destination = anchorDestination(navigation_anchor_);
         if (destination.has_value() && std::abs(*destination - verticalScrollBar()->value()) > 1) {
-            const int distance = std::abs(*destination - verticalScrollBar()->value());
-            scroll_controller_.retargetTo(*destination, navigationDuration(distance),
-                                          QEasingCurve::InOutSine);
-            return;
+            scroll_controller_.moveDirectlyTo(*destination);
         }
         // Keep the semantic destination alive until image requests started by this
         // navigation settle. A decoded image can change every following block's
@@ -1540,7 +1676,12 @@ private:
         if (backend_ == nullptr || document() == nullptr) {
             return;
         }
-        const int prefetch = 900;
+        QElapsedTimer scan;
+        scan.start();
+        const int prefetch_ahead = std::clamp(
+            900 + static_cast<int>(std::abs(scroll_controller_.velocity()) * 0.30), 900, 4200);
+        const int prefetch_behind = 650;
+        const bool moving_down = scroll_controller_.velocity() >= 0.0;
         for (auto& occurrence : image_occurrences_) {
             if (occurrence.requested || occurrence.loaded || occurrence.failed) {
                 continue;
@@ -1548,7 +1689,9 @@ private:
             QTextCursor cursor(document());
             cursor.setPosition(std::min(occurrence.position, document()->characterCount() - 1));
             const auto rectangle = cursorRect(cursor);
-            if (rectangle.bottom() < -prefetch || rectangle.top() > viewport()->height() + prefetch) {
+            const int above = moving_down ? prefetch_behind : prefetch_ahead;
+            const int below = moving_down ? prefetch_ahead : prefetch_behind;
+            if (rectangle.bottom() < -above || rectangle.top() > viewport()->height() + below) {
                 continue;
             }
             if (image_requested_.contains(occurrence.id)) {
@@ -1566,6 +1709,13 @@ private:
                 image_poll_.start();
             }
         }
+        scroll_trace_.recordImageScan(scan.nsecsElapsed() / 1000);
+    }
+
+    void scheduleImagePrefetch(bool immediate = false) {
+        if (image_prefetch_.isActive() && !immediate) return;
+        const int delay = immediate ? 0 : (scroll_controller_.isRunning() ? 67 : 16);
+        image_prefetch_.start(delay);
     }
 
     void pollImages() {
@@ -1575,12 +1725,17 @@ private:
         qint64 geometry_us = 0;
         int count = 0;
         bool received = false;
-        while (true) {
+        std::optional<ViewportAnchor> viewport_anchor;
+        constexpr int maximum_results_per_tick = 4;
+        while (count < maximum_results_per_tick) {
             auto result = api_->poll_image(backend_);
             if (result.id == 0) {
                 break;
             }
-            if (!received) document()->setLayoutEnabled(false);
+            if (!received) {
+                viewport_anchor = captureViewportAnchor();
+                document()->setLayoutEnabled(false);
+            }
             received = true;
             ++count;
             const auto error = fromBuffer(result.error);
@@ -1622,6 +1777,9 @@ private:
         }
         if (received) {
             document()->setLayoutEnabled(true);
+            if (navigation_anchor_.isEmpty() && viewport_anchor.has_value())
+                restoreViewportAnchor(*viewport_anchor);
+            invalidateCodeFrameBounds();
             if (!navigation_anchor_.isEmpty()) ++navigation_image_retarget_count_;
             scheduleNavigationRetarget();
             viewport()->update();
@@ -1671,6 +1829,60 @@ private:
         }
     }
 
+    struct ViewportAnchor {
+        int position = 0;
+        int offset = 0;
+        bool at_top = true;
+    };
+
+    struct CodeFrameBounds {
+        QPointer<QTextFrame> frame;
+        QRectF bounds;
+    };
+
+    [[nodiscard]] ViewportAnchor captureViewportAnchor() const {
+        if (document() == nullptr) return {};
+        const auto cursor = cursorForPosition(QPoint(0, 0));
+        return {cursor.position(), cursorRect(cursor).top(),
+                verticalScrollBar()->value() == verticalScrollBar()->minimum()};
+    }
+
+    void restoreViewportAnchor(const ViewportAnchor& anchor) {
+        if (document() == nullptr || anchor.at_top) {
+            if (anchor.at_top) verticalScrollBar()->setValue(verticalScrollBar()->minimum());
+            return;
+        }
+        QTextCursor cursor(document());
+        cursor.setPosition(std::clamp(anchor.position, 0,
+                                      std::max(0, document()->characterCount() - 1)));
+        verticalScrollBar()->setValue(std::clamp(
+            verticalScrollBar()->value() + cursorRect(cursor).top() - anchor.offset,
+            verticalScrollBar()->minimum(), verticalScrollBar()->maximum()));
+    }
+
+    void invalidateCodeFrameBounds() {
+        code_frame_bounds_dirty_ = true;
+        if (code_frame_bounds_rebuild_pending_) return;
+        code_frame_bounds_rebuild_pending_ = true;
+        QTimer::singleShot(0, this, [this] {
+            code_frame_bounds_rebuild_pending_ = false;
+            code_frame_bounds_.clear();
+            if (document() == nullptr || document()->documentLayout() == nullptr) return;
+            code_frame_bounds_.reserve(code_frames_.size());
+            for (const auto& frame : code_frames_) {
+                if (!frame) continue;
+                code_frame_bounds_.push_back(
+                    {frame, document()->documentLayout()->frameBoundingRect(frame)});
+            }
+            std::sort(code_frame_bounds_.begin(), code_frame_bounds_.end(),
+                      [](const CodeFrameBounds& left, const CodeFrameBounds& right) {
+                          return left.bounds.bottom() < right.bounds.bottom();
+                      });
+            code_frame_bounds_dirty_ = false;
+            viewport()->update();
+        });
+    }
+
     void stopAutoscroll() {
         autoscroll_active_ = false;
         autoscroll_.stop();
@@ -1692,12 +1904,16 @@ private:
     const MoonmarkApiTable* api_ = nullptr;
     void* backend_ = nullptr;
     moonmark::qt::SmoothScrollController scroll_controller_;
+    ScrollFrameTrace scroll_trace_;
     std::vector<Command> commands_;
     std::vector<ImageOccurrence> image_occurrences_;
     std::unordered_map<std::uint32_t, bool> image_requested_;
     std::vector<QString> code_sources_;
     QString last_copy_text_;
     std::vector<QPointer<QTextFrame>> code_frames_;
+    std::vector<CodeFrameBounds> code_frame_bounds_;
+    bool code_frame_bounds_dirty_ = true;
+    bool code_frame_bounds_rebuild_pending_ = false;
     QJsonObject settings_;
     QJsonObject metrics_;
     QString title_ = QStringLiteral("Moonmark");
@@ -1713,6 +1929,7 @@ private:
     int navigation_retarget_count_ = 0;
     int navigation_image_retarget_count_ = 0;
     QTimer image_poll_;
+    QTimer image_prefetch_;
     QTimer autoscroll_;
     double wheel_fraction_ = 0.0;
     bool autoscroll_active_ = false;
@@ -1820,6 +2037,39 @@ public:
     }
 
     void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("scroll-profile")) {
+            QTimer::singleShot(80, this, [this] {
+                document_->verticalScrollBar()->setValue(0);
+                document_->resetScrollProfile();
+                auto* burst = new QTimer(this);
+                auto count = std::make_shared<int>(0);
+                burst->setTimerType(Qt::PreciseTimer);
+                burst->setInterval(5);
+                QObject::connect(burst, &QTimer::timeout, this, [this, burst, count] {
+                    if ((*count)++ < 120) {
+                        const QPointF position(document_->viewport()->width() / 2.0,
+                                               document_->viewport()->height() / 2.0);
+                        QWheelEvent wheel(position,
+                                          document_->viewport()->mapToGlobal(position.toPoint()),
+                                          QPoint(), QPoint(0, -120), Qt::NoButton, Qt::NoModifier,
+                                          Qt::ScrollUpdate, false);
+                        QApplication::sendEvent(document_->viewport(), &wheel);
+                        return;
+                    }
+                    burst->stop();
+                    burst->deleteLater();
+                    QTimer::singleShot(1200, this, [this] {
+                        std::fprintf(stdout, "%s\n",
+                                     document_->scrollProfileSummary().toUtf8().constData());
+                        std::fprintf(stdout, "MOONMARK_SMOKE scroll_profile=ok\n");
+                        std::fflush(stdout);
+                        QCoreApplication::exit(0);
+                    });
+                });
+                burst->start();
+            });
+            return;
+        }
         if (mode == QStringLiteral("multidoc-watcher")) {
             QTimer::singleShot(250, this, [this] {
                 if (documents_.size() < 2) {
@@ -1863,6 +2113,80 @@ public:
                         std::fflush(stdout);
                         QCoreApplication::exit(result ? 0 : 17);
                     });
+            });
+            return;
+        }
+        if (mode == QStringLiteral("motion-v2")) {
+            QTimer::singleShot(80, this, [this] {
+                const auto before = api_->backend_counters(backend_);
+                const auto constructions = document_->constructionCount();
+                document_->verticalScrollBar()->setValue(0);
+                const QPointF position(document_->viewport()->width() / 2.0,
+                                       document_->viewport()->height() / 2.0);
+                for (int index = 0; index < 12; ++index) {
+                    QWheelEvent wheel(position,
+                                      document_->viewport()->mapToGlobal(position.toPoint()),
+                                      QPoint(), QPoint(0, -120), Qt::NoButton, Qt::NoModifier,
+                                      Qt::ScrollUpdate, false);
+                    QApplication::sendEvent(document_->viewport(), &wheel);
+                }
+                const int forward_target = document_->scrollMotionTarget();
+                QTimer::singleShot(40, this, [this, position, forward_target, before, constructions] {
+                    for (int index = 0; index < 4; ++index) {
+                        QWheelEvent wheel(position,
+                                          document_->viewport()->mapToGlobal(position.toPoint()),
+                                          QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                                          Qt::ScrollUpdate, false);
+                        QApplication::sendEvent(document_->viewport(), &wheel);
+                    }
+                    const bool reversed_target = document_->scrollMotionTarget() < forward_target;
+                    auto* poll = new QTimer(this);
+                    auto elapsed = std::make_shared<QElapsedTimer>();
+                    elapsed->start();
+                    poll->setInterval(10);
+                    QObject::connect(poll, &QTimer::timeout, this,
+                        [this, poll, elapsed, reversed_target, before, constructions] {
+                        if (document_->scrollMotionRunning() && elapsed->elapsed() < 3000) return;
+                        poll->stop();
+                        poll->deleteLater();
+                        const auto samples = document_->scrollMotionSamples();
+                        int distinct = samples.isEmpty() ? 0 : 1;
+                        int largest_jump = 0;
+                        for (int index = 1; index < samples.size(); ++index) {
+                            const int delta = samples.at(index) - samples.at(index - 1);
+                            distinct += delta != 0 ? 1 : 0;
+                            largest_jump = std::max(largest_jump, std::abs(delta));
+                        }
+                        const bool landed = document_->verticalScrollBar()->value() ==
+                                            document_->scrollMotionTarget();
+                        const QString anchor = QStringLiteral("heading-after-tall-image");
+                        document_->navigateToAnchor(anchor, false);
+                        const bool direct_navigation =
+                            std::abs(document_->anchorViewportY(anchor) -
+                                     document_->navigationInset()) <= 3;
+                        const bool partial_wheel = sidebar_->testPartialOutlineWheel();
+                        sidebar_->cancelOutlineScroll();
+                        const bool cancelled = !sidebar_->outlineScrollRunning();
+                        const auto after = api_->backend_counters(backend_);
+                        const bool counters = before.parse_count == after.parse_count &&
+                            before.load_count == after.load_count &&
+                            constructions == document_->constructionCount();
+                        const bool ok = distinct >= 3 && largest_jump > 0 && landed &&
+                            reversed_target && direct_navigation && partial_wheel && cancelled && counters;
+                        std::fprintf(stdout,
+                                     "MOTION_DOCUMENT samples=%d largest_jump=%d landed=%s reversal=%s direct_navigation=%s\n",
+                                     distinct, largest_jump, landed ? "ok" : "failed",
+                                     reversed_target ? "ok" : "failed",
+                                     direct_navigation ? "ok" : "failed");
+                        std::fprintf(stdout,
+                                     "MOONMARK_SMOKE motion=%s counters=%s partial_wheel=%s cancelled=%s\n",
+                                     ok ? "ok" : "failed", counters ? "stable" : "changed",
+                                     partial_wheel ? "ok" : "failed", cancelled ? "ok" : "failed");
+                        std::fflush(stdout);
+                        QCoreApplication::exit(ok ? 0 : 16);
+                    });
+                    poll->start();
+                });
             });
             return;
         }
@@ -2996,9 +3320,14 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
     // Smoke tests must not update the user's application settings.
     const bool motion_smoke = std::find(argument_storage.cbegin(), argument_storage.cend(),
                                         QByteArray("--smoke-motion")) != argument_storage.cend();
+    const bool scroll_profile_smoke =
+        std::find(argument_storage.cbegin(), argument_storage.cend(),
+                  QByteArray("--smoke-scroll-profile")) != argument_storage.cend();
+    if (scroll_profile_smoke) qputenv("MOONMARK_SCROLL_TRACE", "1");
     for (const auto& argument : argument_storage) {
         if (argument.startsWith("--smoke-")) {
-            if (!motion_smoke) qputenv("MOONMARK_REDUCED_MOTION", "1");
+            if (!motion_smoke && !scroll_profile_smoke)
+                qputenv("MOONMARK_REDUCED_MOTION", "1");
             QSettings::setDefaultFormat(QSettings::IniFormat);
             QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                               QDir::current().absoluteFilePath("target/native-settings"));
@@ -3040,7 +3369,9 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
         } else if (argument == QStringLiteral("--smoke-plaintext")) {
             smoke_mode = QStringLiteral("plaintext");
         } else if (argument == QStringLiteral("--smoke-motion")) {
-            smoke_mode = QStringLiteral("motion");
+            smoke_mode = QStringLiteral("motion-v2");
+        } else if (argument == QStringLiteral("--smoke-scroll-profile")) {
+            smoke_mode = QStringLiteral("scroll-profile");
         } else if (argument == QStringLiteral("--smoke-multidoc-watcher")) {
             smoke_mode = QStringLiteral("multidoc-watcher");
         } else if (!argument.startsWith(QLatin1Char('-')) && QFileInfo::exists(argument)) {

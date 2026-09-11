@@ -38,11 +38,12 @@ public:
         }
         destination = std::clamp(destination, verticalScrollBar()->minimum(),
                                  verticalScrollBar()->maximum());
-        const int distance = std::abs(destination - verticalScrollBar()->value());
         const bool reduced = qEnvironmentVariable("MOONMARK_REDUCED_MOTION") == QStringLiteral("1");
-        scrolling_.animateTo(destination,
-                             animate && !reduced ? std::clamp(120 + distance / 3, 120, 300) : 0,
-                             QEasingCurve::InOutQuad);
+        if (animate && !reduced) {
+            scrolling_.addWheelDistance(destination - verticalScrollBar()->value());
+        } else {
+            scrolling_.moveDirectlyTo(destination);
+        }
     }
 
     [[nodiscard]] bool scrollRunning() const { return scrolling_.isRunning(); }
@@ -59,20 +60,14 @@ protected:
             return;
         }
         if (event->angleDelta().y() != 0) {
-            const int baseline = scrolling_.isRunning()
-                ? scrolling_.targetValue() : verticalScrollBar()->value();
+            const double wheel_step = std::max(36.0,
+                static_cast<double>(verticalScrollBar()->singleStep()) * 3.0);
             const double scaled = -static_cast<double>(event->angleDelta().y()) *
-                                  verticalScrollBar()->singleStep() * 3.0 / 120.0;
+                                  wheel_step / 120.0;
             wheel_fraction_ += scaled;
-            int movement = static_cast<int>(std::round(wheel_fraction_));
-            if (movement == 0) movement = scaled < 0 ? -1 : 1;
+            const double movement = std::trunc(wheel_fraction_);
             wheel_fraction_ -= movement;
-            const int destination = baseline + movement;
-            if (scrolling_.isRunning()) {
-                scrolling_.retargetTo(destination, 140, QEasingCurve::InOutQuad);
-            } else {
-                scrolling_.animateTo(destination, 140, QEasingCurve::InOutQuad);
-            }
+            scrolling_.addWheelDistance(movement == 0.0 ? std::copysign(1.0, scaled) : movement);
             event->accept();
             return;
         }
@@ -178,7 +173,7 @@ DocumentSidebar::DocumentSidebar(QWidget* parent) : QWidget(parent) {
     outline_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     const auto activate = [this](QTreeWidgetItem* item) {
         if (!item) return;
-        outline_->revealItem(item, true);
+        outline_->revealItem(item, false);
         if (navigate) navigate(item->data(0, Qt::UserRole).toString());
     };
     connect(outline_, &QTreeWidget::itemClicked, this, activate);
