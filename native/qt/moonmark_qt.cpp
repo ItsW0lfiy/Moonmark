@@ -2090,7 +2090,9 @@ public:
 
     void runSmoke(const QString& mode) {
         if (mode == QStringLiteral("scroll-profile")) {
-            QTimer::singleShot(80, this, [this] {
+            // Measure steady scrolling after the initial document/layout paint;
+            // startup construction is covered by separate load benchmarks.
+            QTimer::singleShot(500, this, [this] {
                 document_->verticalScrollBar()->setValue(0);
                 document_->resetScrollProfile();
                 auto* burst = new QTimer(this);

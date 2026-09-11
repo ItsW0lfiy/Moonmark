@@ -9,8 +9,10 @@
 namespace moonmark::qt {
 namespace {
 constexpr double response_rate = 17.0;
-constexpr double stopped_velocity = 5.0;
-constexpr double stopped_distance = 0.45;
+// End before integer scrollbar quantization turns the final sub-pixel tail into
+// isolated one-pixel updates. The snap is visually sub-pixel at normal DPR.
+constexpr double stopped_velocity = 35.0;
+constexpr double stopped_distance = 1.25;
 constexpr double rapid_distance = 320.0;
 constexpr double rapid_velocity = 900.0;
 }
@@ -79,7 +81,8 @@ void SmoothScrollController::addWheelDistance(double distance) {
         running_ = true;
     }
     target_ = std::clamp(target_ + distance, minimum, maximum);
-    if (std::abs(target_ - position_) >= rapid_distance && timer_.interval() != 8)
+    if (!timer_.isActive() && std::abs(target_ - position_) >= rapid_distance &&
+        timer_.interval() != 8)
         timer_.setInterval(8);
     requestFrame();
 }
