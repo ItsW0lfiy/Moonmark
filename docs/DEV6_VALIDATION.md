@@ -1,6 +1,6 @@
 # Moonmark 0.1.0-dev.6 validation
 
-Validation date: 2026-09-11. Platform: Windows x64. Starting local and remote HEAD: `81796b372d25ae51a722e7d7957e7f84e059d220`.
+Validation date: 2026-09-11. Platform: Windows x64. The initial dev.6 work started at `81796b372d25ae51a722e7d7957e7f84e059d220`; the final motion/rendering hardening round started from pushed HEAD `b502aedadf2ecfb95b723f5f6720936606dd138f`.
 
 ## Product behavior
 
@@ -36,11 +36,11 @@ Release measurements are local samples, not hard CI thresholds.
 | Outline reveal | 31 distinct samples; 7.8–8.5 ms first change; monotonic |
 | Sidebar-width reversal | 12 samples; largest observed step 47–49 px; reversed without resetting to an endpoint |
 | 650,000-character literal text construction, Release | 485,811 microseconds; parse count 0 |
-| Image stress semantic parse, 20 runs | p50 0.680 ms; p95 0.877 ms |
-| Image stress presentation construction | p50 22.078 ms; p95 25.168 ms |
-| 10,000-block semantic parse, 20 runs | p50 55.778 ms; p95 66.971 ms |
-| 10,000-block presentation construction | p50 15.134 ms; p95 22.018 ms |
-| Image stress completion | 250 loaded, 5 intentional missing, 0 decode failures, 6 canonical requests, 15.36 MB cache, 369 ms completion |
+| Image stress semantic parse, 20 runs | p50 0.591 ms; p95 0.824 ms |
+| Image stress presentation construction | p50 18.131 ms; p95 20.055 ms |
+| 10,000-block semantic parse, 20 runs | p50 37.602 ms; p95 46.618 ms |
+| 10,000-block presentation construction | p50 10.301 ms; p95 12.838 ms |
+| Image stress completion | 250 loaded, 5 intentional missing, 0 decode failures, 6 canonical requests, 15.36 MB cache, 333 ms completion / 478 ms total smoke |
 | One moderate document after 3 s | 120.35 MiB working set; 45.99 MiB private |
 | Four moderate retained documents after 3 s | 122.12 MiB working set; 48.05 MiB private |
 | Four documents including large text and image stress | 196.66 MiB working set; 126.14 MiB private |
@@ -49,16 +49,16 @@ Normal-document zoom action/paint times remained in the low tens of milliseconds
 
 ## Native and package checks
 
-The complete Cargo test run passed 21 core unit tests, 4 acceptance tests, 2 native frontend tests, and documentation tests. Strict Clippy passed with `-D warnings`. The C++20 `/W4` build emitted no compiler warning. Release build and portable assembly passed.
+The complete Cargo test run passed 21 core unit tests, 4 acceptance tests, 2 native frontend tests, and documentation tests. Strict Clippy passed with `-D warnings`. The C++20 `/W4` build emitted no compiler warning. Release build and portable assembly passed. The smoke harness verified Moonmark's exact Ctrl+A/C and code-Copy payloads internally; Windows clipboard ownership was unavailable to these automated child processes, so physical clipboard integration remains a manual check rather than being mislabeled as verified.
 
 The packaged application was tested with `PATH` limited to `C:\Windows\System32;C:\Windows` and Qt discovery variables removed. Icon, render/selection/code-copy, style, retained multi-document switching, layout-transition counters, and 250-image stress smokes passed.
 
 The portable output contains 16 files:
 
-- `Moonmark.exe`: 6,388,736 bytes (6.09 MiB)
-- complete folder: 35,021,676 bytes (33.40 MiB)
+- `Moonmark.exe`: 6,425,088 bytes (6.13 MiB)
+- complete folder: 35,058,028 bytes (33.43 MiB)
 - dependency/assets/legal overhead: 28,632,940 bytes (27.31 MiB)
-- compressed ZIP: 15,530,358 bytes (14.81 MiB)
+- compressed ZIP: 15,545,466 bytes (14.83 MiB)
 
 The largest app-local dependencies are Qt6Core (10,363,704 bytes), Qt6Gui (9,546,552), Qt6Widgets (6,497,080), qwindows (991,032), and the app-local MSVC runtime set (1,048,216 combined). `dumpbin /DEPENDENTS` found Qt, MSVC CRT, and Windows system libraries; system ICU is supplied by Windows. No CLR/hostfxr, JVM, Node.js, browser engine, WebView2, Chromium, or Qt WebEngine dependency is present.
 
