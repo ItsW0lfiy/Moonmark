@@ -8,16 +8,17 @@ Validation date: 2026-09-11. Platform: Windows x64. Starting local and remote HE
 - Opening a canonical duplicate activates its existing session. Closing the final session returns to the empty state. No single-instance lock or inter-process routing was added, so independent Moonmark processes remain supported.
 - `.txt` files bypass Comrak, headings, links, images, and the outline. The literal fixture preserves Markdown-looking characters, line breaks, tabs, Unicode, spaces, selection, and long horizontal lines.
 - An inactive plain-text session's watcher reloaded that session once while the active Markdown session's load, parse, and image-request counters remained unchanged. The plain-text parse delta remained zero.
-- Heading navigation resolves current named-anchor geometry, leaves top breathing room, and uses interruptible cubic-out scrollbar animation. Mouse-wheel notches use a short retargetable animation; pixel/touchpad scrolling and scrollbar dragging remain direct. Keyboard/mouse input cancels owned scroll motion.
-- Sidebar width uses a short native animation. `MOONMARK_REDUCED_MOTION=1` makes owned transitions immediate for accessibility and deterministic testing.
+- Heading navigation uses a direct anchor-position map, resolves current geometry with deterministic top breathing room, and uses a shared elapsed-time controller with distance-aware duration. Image delivery, resize, and zoom retarget the same semantic destination from the current scrollbar value; no animation queue or stale pixel coordinate is retained.
+- Document and outline wheel motion preserve partial angle deltas and retarget continuously. Pixel/touchpad scrolling and scrollbar dragging remain direct, while keyboard/mouse input cancels owned motion. Sidebar reveal uses the same controller rather than `scrollToItem` jumps.
+- Sidebar width uses a short native animation that reverses from its actual partial width. `MOONMARK_REDUCED_MOTION=1` makes owned transitions immediate for accessibility and deterministic testing.
 
 ## Renderer review
 
-The code-block review found one continuous low-contrast graphite frame with an integrated neutral language header, real separator, quiet Copy action, syntax color, preserved blank lines, and no hard outer stroke. Qt's native `QTextFrameFormat` has no corner-radius property, so Moonmark keeps selectable native text instead of rasterizing the block to fake rounded corners.
+The code-block review found one continuous low-contrast graphite frame with an integrated neutral language header, real separator, quiet Copy action, syntax color, preserved blank lines, and no hard outer stroke. Qt's native `QTextFrameFormat` has no corner-radius property, so a narrow post-paint mask rounds only the four frame corners while the frame geometry, text, selection, copy, scrolling, and accessibility remain native.
 
-Tables retain immediate column tracking through faint vertical separators, stronger header/horizontal structure, minimal outer framing, compact numeric columns, native selection, and inline-code formatting. They do not read as spreadsheet controls.
+Tables retain immediate column tracking through softened vertical separators, slightly stronger header/horizontal structure, minimal outer framing, compact numeric columns, native selection, and inline-code formatting. They do not read as spreadsheet controls.
 
-The prose inline-code screenshot exposed a one-pixel lower/right edge caused by extending `QTextLayout` ink geometry vertically in the decorative padding pass. The fix leaves Qt's native character background vertically authoritative and paints only horizontal rounded breathing room. It changes neither text, copy output, wrapping, selection, nor accessibility. Wrapped prose, lists, quotes, and table cells were rechecked after the fix.
+The prose inline-code screenshot exposed a residual punctuation-like end pixel from antialiased path subtraction. The follow-up fix clips each horizontal cap outside a small glyph-overhang guard and leaves Qt's native character background vertically authoritative. It changes neither text, copy output, wrapping, selection, nor accessibility. Wrapped prose, lists, quotes, and table cells were rechecked after the fix.
 
 The existing image-layout regression remains fixed. Loaded images and placeholders report zero unexplained excess block height after declared margins across reload, narrow/wide resize, and 80/100/125/150% zoom.
 
@@ -28,8 +29,12 @@ Release measurements are local samples, not hard CI thresholds.
 | Case | Result |
 | --- | --- |
 | Retained two-document switch, 40 alternations | 323 microseconds average |
-| Heading animation setup | 2,501 microseconds |
-| Sidebar animation setup | 255 microseconds |
+| Direct anchor lookup | 2–5 microseconds in repeated local motion smokes |
+| First scrollbar change | 29.2–32.5 ms from click request in local Debug motion smokes |
+| First painted motion frame | 33.7–37.8 ms from click request in local Debug motion smokes |
+| Long heading motion | 56–58 distinct samples over 1,567 px; largest observed step 103–115 px; monotonic |
+| Outline reveal | 31 distinct samples; 7.8–8.5 ms first change; monotonic |
+| Sidebar-width reversal | 12 samples; largest observed step 47–49 px; reversed without resetting to an endpoint |
 | 650,000-character literal text construction, Release | 485,811 microseconds; parse count 0 |
 | Image stress semantic parse, 20 runs | p50 0.680 ms; p95 0.877 ms |
 | Image stress presentation construction | p50 22.078 ms; p95 25.168 ms |
@@ -61,7 +66,7 @@ The largest app-local dependencies are Qt6Core (10,363,704 bytes), Qt6Gui (9,546
 
 Ignored snapshots under `target/visual-dev6` cover: empty, prose, headings/lists, tables, code, inline prose/table, inline wrap, inline selection, plain text, image gap, image stress, narrow, wide, concept, sidebar hidden, menu, whole-document selection, zoom 80/100/125/150, code at 150%, and a Markdown-plus-text multi-document window.
 
-Inspection found an achromatic broad document surface, clear active/inactive file entries, literal text presentation, integrated code metadata, quieter code/table framing, retained neutral selection, and no theme blue. The user-reported prose inline-code edge was visible before the geometry correction and absent afterward.
+Inspection found an achromatic broad document surface, clear active/inactive file entries, literal text presentation, integrated code metadata, genuinely rounded code-frame corners, quieter table framing, retained neutral selection, and no theme blue. The user-reported prose inline-code end pixel was visible before the clipped-cap correction and absent afterward.
 
 ## Commands
 
