@@ -346,6 +346,7 @@ public:
 
     [[nodiscard]] QString summary() const {
         const auto intervals = statistics(paint_intervals_us_);
+        const auto controller = statistics(controller_intervals_us_);
         const auto costs = statistics(paint_costs_us_);
         const auto writes = statistics(scrollbar_write_us_);
         const auto values = statistics(value_change_us_);
@@ -358,7 +359,8 @@ public:
                    "paint_cost_us_p50=%13 p95=%14 p99=%15 worst=%16 "
                    "scrollbar_write_us_p95=%17 value_change_us_p95=%18 "
                    "image_scans=%19 image_scan_us_p95=%20 image_deliveries=%21 "
-                   "image_delivery_us_p95=%22")
+                   "image_delivery_us_p95=%22 controller_interval_ms_p50=%23 p95=%24 "
+                   "p99=%25 worst=%26")
             .arg(wheel_events_)
             .arg(controller_intervals_us_.size())
             .arg(paint_costs_us_.size())
@@ -374,7 +376,11 @@ public:
             .arg(costs.p50).arg(costs.p95).arg(costs.p99).arg(costs.worst)
             .arg(writes.p95).arg(values.p95)
             .arg(image_scan_us_.size()).arg(scans.p95)
-            .arg(image_delivery_us_.size()).arg(deliveries.p95);
+            .arg(image_delivery_us_.size()).arg(deliveries.p95)
+            .arg(controller.p50 / 1000.0, 0, 'f', 2)
+            .arg(controller.p95 / 1000.0, 0, 'f', 2)
+            .arg(controller.p99 / 1000.0, 0, 'f', 2)
+            .arg(controller.worst / 1000.0, 0, 'f', 2);
     }
 
 private:
