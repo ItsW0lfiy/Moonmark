@@ -67,7 +67,7 @@ cargo run -- --smoke-navigation fixtures\compatibility\all-features.md
 
 The native test suite also creates temporary Markdown/plain-text files to verify that a background document's file watcher reloads only its own retained session.
 
-After a Release build, `pwsh -File tools/render_performance.ps1` runs native geometry, zoom, and image-stress checks. Set process variable `MOONMARK_PROFILE=1` for format/layout, worker queue/decode, and Qt delivery phase timings. `interactive_us` measures the zoom action; `painted_us` includes synchronous viewport repaint; `elapsed_us` additionally includes exhaustive format/text verification. Compare like-for-like Release runs without concurrent builds. The image `completion_ms` excludes the subsequent zoom verification.
+After a Release build, `pwsh -File tools/render_performance.ps1` runs native geometry, zoom, image-stress, and rapid-scroll profiles for large text, image-heavy, and mixed-feature documents. Set process variable `MOONMARK_PROFILE=1` for format/layout, worker queue/decode, and Qt delivery phase timings. `interactive_us` measures the zoom action; `painted_us` includes synchronous viewport repaint; `elapsed_us` additionally includes exhaustive format/text verification. Scroll profiles report actual viewport paint intervals and hot-path phase costs, not only controller positions. Compare like-for-like Release runs without concurrent builds. The image `completion_ms` excludes the subsequent zoom verification.
 
 ## Linux
 

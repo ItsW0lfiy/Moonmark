@@ -25,7 +25,7 @@ Moonmark is file-oriented rather than vault-oriented: it reads an ordinary Markd
 
 Dev.6 retains one complete Rust backend and native `QTextDocument` per open file. Switching therefore preserves scroll, zoom, selection, outline, watcher, and decoded image state without rereading or reparsing. Canonically identical paths activate the existing session. Literal `.txt` files bypass Comrak and Markdown presentation entirely.
 
-Document navigation and mouse-wheel notches use short interruptible native easing; precision touchpad/pixel scrolling remains direct. Set `MOONMARK_REDUCED_MOTION=1` to disable Moonmark-owned animation. Code blocks and tables use quieter graphite framing while retaining native selection and accessibility.
+Mouse-wheel notches feed one continuous elapsed-time trajectory that accelerates under repeated input and reverses without restarting an easing animation. Precision touchpad/pixel input, scrollbar dragging, keyboard paging/Home/End, outline activation, and document anchors remain direct. Image prefetch and delivery are coalesced away from rapid paint cadence. Code blocks and tables use quieter graphite framing while retaining native selection and accessibility.
 
 ## Build and run
 

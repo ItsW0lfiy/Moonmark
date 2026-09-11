@@ -4,7 +4,10 @@ foreach ($case in @(
     @('image-geometry', 'fixtures/image-layout-regression.md'),
     @('zoom', 'fixtures/moonmark-visual-test.md'),
     @('zoom', 'fixtures/generated/large-text.md'),
-    @('images', 'fixtures/generated/image-stress.md')
+    @('images', 'fixtures/generated/image-stress.md'),
+    @('scroll-profile', 'fixtures/generated/large-text.md'),
+    @('scroll-profile', 'fixtures/generated/image-stress-250.md'),
+    @('scroll-profile', 'fixtures/compatibility/all-features.md')
 )) {
     $start = [Diagnostics.ProcessStartInfo]::new((Resolve-Path -LiteralPath $Executable).Path)
     $start.UseShellExecute = $false

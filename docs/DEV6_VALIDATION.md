@@ -8,8 +8,10 @@ Validation date: 2026-09-11. Platform: Windows x64. The initial dev.6 work start
 - Opening a canonical duplicate activates its existing session. Closing the final session returns to the empty state. No single-instance lock or inter-process routing was added, so independent Moonmark processes remain supported.
 - `.txt` files bypass Comrak, headings, links, images, and the outline. The literal fixture preserves Markdown-looking characters, line breaks, tabs, Unicode, spaces, selection, and long horizontal lines.
 - An inactive plain-text session's watcher reloaded that session once while the active Markdown session's load, parse, and image-request counters remained unchanged. The plain-text parse delta remained zero.
-- Heading navigation uses a direct anchor-position map, resolves current geometry with deterministic top breathing room, and uses a shared elapsed-time controller with distance-aware duration. Image delivery, resize, and zoom retarget the same semantic destination from the current scrollbar value; no animation queue or stale pixel coordinate is retained.
-- Document and outline wheel motion preserve partial angle deltas and retarget continuously. Pixel/touchpad scrolling and scrollbar dragging remain direct, while keyboard/mouse input cancels owned motion. Sidebar reveal uses the same controller rather than `scrollToItem` jumps.
+- Heading navigation uses a direct anchor-position map, resolves current geometry with deterministic top breathing room, and lands immediately. Image delivery, resize, and zoom correct the same semantic destination while top-visible character/offset anchoring protects ordinary layout changes; no queued animation or stale pixel coordinate is retained.
+- Document and outline wheel motion preserve partial angle deltas in one continuous floating-point trajectory. Repeated input extends the live target without resetting velocity, reversal changes that trajectory coherently, and there is no pixels-per-frame cap. Pixel/touchpad scrolling, scrollbar dragging, keyboard paging/Home/End, heading links, outline activation, tab restoration, and layout corrections remain direct.
+- The controller advances from the real viewport paint event requested by a precise adaptive timer: 16 ms normally and 8 ms only during high distance/velocity. The final sub-pixel tail settles within 1.25 px rather than producing isolated one-pixel staircase updates.
+- Visible-image discovery is coalesced to roughly 15 Hz during motion with velocity-aware look-ahead. Completed image format/layout application is deferred until owned wheel motion settles. Custom code-frame corner geometry is cached across paints and rebuilt only after layout mutation; quote and inline-code work remains bounded to visible blocks.
 - Sidebar width uses a short native animation that reverses from its actual partial width. `MOONMARK_REDUCED_MOTION=1` makes owned transitions immediate for accessibility and deterministic testing.
 
 ## Renderer review
@@ -24,23 +26,26 @@ The existing image-layout regression remains fixed. Loaded images and placeholde
 
 ## Performance measurements
 
-Release measurements are local samples, not hard CI thresholds.
+Release measurements are local samples, not hard CI thresholds. The rapid-scroll trace records changed-scroll paints in a bounded in-memory buffer and prints one summary after the run; it does not perform per-frame console output. Physical acceptance remains visual because compositor presentation cannot be inferred solely from QWidget paint events.
 
 | Case | Result |
 | --- | --- |
 | Retained two-document switch, 40 alternations | 323 microseconds average |
 | Direct anchor lookup | 2–5 microseconds in repeated local motion smokes |
-| First scrollbar change | 33.2 ms in Release; 47.0 ms in a cold local Debug smoke |
-| First painted motion frame | 36.4 ms in Release; 54.5 ms in a cold local Debug smoke |
-| Long heading motion | 61–63 distinct samples over 1,567 px; maximum step hard-limited to 28 logical px; monotonic |
-| Outline reveal | 17 distinct samples; 16.1–17.0 ms first change; maximum step 28 px; monotonic |
+| Rapid-scroll input to first changed paint | 17.0–17.3 ms across final Release text/image/mixed samples |
+| 10,000-block rapid scroll | paint interval p50 8.29 ms, p95 16.22 ms, p99 32.23 ms, worst 33.02 ms; 4/2/0/0 intervals over 16.67/25/33.3/50 ms |
+| 250-image rapid scroll | paint interval p50 8.15 ms, p95 16.21 ms, p99 31.59 ms, worst 31.85 ms; 3/2/0/0 intervals over 16.67/25/33.3/50 ms |
+| Mixed code/table/image rapid scroll | paint interval p50 8.92 ms, p95 17.03 ms, p99/worst 32.54 ms; 5/1/0/0 intervals over 16.67/25/33.3/50 ms |
+| Paint CPU cost (text / image / mixed) | p95 5.80 / 1.54 / 1.98 ms; worst 6.41 / 2.34 / 3.36 ms |
+| Controller interval worst (text / image / mixed) | 18.13 / 17.22 / 18.36 ms; frame-position advancement is paint-synchronized |
+| Image visibility scan rate during rapid motion | 15–16 scans across 124–135 controller frames in the large fixtures; p95 scan cost 0.100 ms |
 | Sidebar-width reversal | 12 samples; largest observed step 47–49 px; reversed without resetting to an endpoint |
 | 650,000-character literal text construction, Release | 485,811 microseconds; parse count 0 |
-| Image stress semantic parse, 20 runs | p50 0.591 ms; p95 0.824 ms |
-| Image stress presentation construction | p50 18.131 ms; p95 20.055 ms |
-| 10,000-block semantic parse, 20 runs | p50 37.602 ms; p95 46.618 ms |
-| 10,000-block presentation construction | p50 10.301 ms; p95 12.838 ms |
-| Image stress completion | 250 loaded, 5 intentional missing, 0 decode failures, 6 canonical requests, 15.36 MB cache, 333 ms completion / 478 ms total smoke |
+| Image stress semantic parse, 20 runs | p50 0.635 ms; p95 1.441 ms |
+| Image stress presentation construction | p50 22.111 ms; p95 25.088 ms |
+| 10,000-block semantic parse, 20 runs | p50 49.995 ms; p95 65.346 ms |
+| 10,000-block presentation construction | p50 14.671 ms; p95 21.717 ms |
+| Image stress completion | 250 loaded, 5 intentional missing, 0 decode failures, 6 canonical requests, 15.36 MB cache, 404 ms completion / 600 ms total smoke |
 | One moderate document after 3 s | 120.35 MiB working set; 45.99 MiB private |
 | Four moderate retained documents after 3 s | 122.12 MiB working set; 48.05 MiB private |
 | Four documents including large text and image stress | 196.66 MiB working set; 126.14 MiB private |
@@ -55,10 +60,10 @@ The packaged application was tested with `PATH` limited to `C:\Windows\System32;
 
 The portable output contains 16 files:
 
-- `Moonmark.exe`: 6,425,088 bytes (6.13 MiB)
-- complete folder: 35,058,028 bytes (33.43 MiB)
+- `Moonmark.exe`: 6,458,368 bytes (6.16 MiB)
+- complete folder: 35,091,308 bytes (33.47 MiB)
 - dependency/assets/legal overhead: 28,632,940 bytes (27.31 MiB)
-- compressed ZIP: 15,545,466 bytes (14.83 MiB)
+- compressed ZIP: 15,561,112 bytes (14.84 MiB)
 
 The largest app-local dependencies are Qt6Core (10,363,704 bytes), Qt6Gui (9,546,552), Qt6Widgets (6,497,080), qwindows (991,032), and the app-local MSVC runtime set (1,048,216 combined). `dumpbin /DEPENDENTS` found Qt, MSVC CRT, and Windows system libraries; system ICU is supplied by Windows. No CLR/hostfxr, JVM, Node.js, browser engine, WebView2, Chromium, or Qt WebEngine dependency is present.
 
