@@ -1,20 +1,32 @@
 #pragma once
 
 #include <QJsonArray>
+#include <QHash>
 #include <QStringList>
+#include <QVector>
 #include <QWidget>
 #include <functional>
 
 class QLabel;
 class QPushButton;
-class QTreeWidget;
+class QTreeWidgetItem;
 
 namespace moonmark::qt {
+class SmoothTreeWidget;
 class DocumentSidebar final : public QWidget {
 public:
     explicit DocumentSidebar(QWidget* parent = nullptr);
     void setDocuments(const QStringList& filenames, int active_index);
     void setOutline(const QJsonArray& outline);
+    bool revealOutlineAnchor(const QString& anchor, bool animate = true);
+    [[nodiscard]] bool outlineScrollRunning() const;
+    [[nodiscard]] int outlineScrollValue() const;
+    [[nodiscard]] int outlineScrollTarget() const;
+    [[nodiscard]] qint64 outlineFirstChangeMicros() const;
+    [[nodiscard]] QVector<int> outlineScrollSamples() const;
+    [[nodiscard]] bool outlineAnchorVisible(const QString& anchor) const;
+    [[nodiscard]] bool testPartialOutlineWheel();
+    void cancelOutlineScroll();
     std::function<void()> open;
     std::function<void()> reload;
     std::function<void(const QString&)> navigate;
@@ -23,7 +35,8 @@ public:
 
 private:
     QPushButton* reload_;
-    QTreeWidget* documents_;
-    QTreeWidget* outline_;
+    SmoothTreeWidget* documents_;
+    SmoothTreeWidget* outline_;
+    QHash<QString, QTreeWidgetItem*> outline_items_;
 };
 } // namespace moonmark::qt

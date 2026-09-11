@@ -1,17 +1,99 @@
 #include "document_sidebar.h"
 #include "moon_style.h"
+#include "smooth_scroll_controller.h"
 
 #include <QApplication>
 #include <QBoxLayout>
 #include <QHeaderView>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QTreeWidget>
+#include <QWheelEvent>
 #include <algorithm>
 #include <vector>
 
 namespace moonmark::qt {
+
+class SmoothTreeWidget final : public QTreeWidget {
+public:
+    explicit SmoothTreeWidget(QWidget* parent = nullptr)
+        : QTreeWidget(parent), scrolling_(verticalScrollBar()) {
+        setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    }
+
+    void revealItem(QTreeWidgetItem* item, bool animate) {
+        if (!item) return;
+        const QRect item_rect = visualItemRect(item);
+        if (!item_rect.isValid()) return;
+        int destination = verticalScrollBar()->value();
+        constexpr int inset = 6;
+        if (item_rect.top() < inset) {
+            destination += item_rect.top() - inset;
+        } else if (item_rect.bottom() > viewport()->height() - inset) {
+            destination += item_rect.bottom() - viewport()->height() + inset;
+        }
+        destination = std::clamp(destination, verticalScrollBar()->minimum(),
+                                 verticalScrollBar()->maximum());
+        const int distance = std::abs(destination - verticalScrollBar()->value());
+        const bool reduced = qEnvironmentVariable("MOONMARK_REDUCED_MOTION") == QStringLiteral("1");
+        scrolling_.animateTo(destination,
+                             animate && !reduced ? std::clamp(120 + distance / 3, 120, 300) : 0,
+                             QEasingCurve::InOutQuad);
+    }
+
+    [[nodiscard]] bool scrollRunning() const { return scrolling_.isRunning(); }
+    [[nodiscard]] int scrollTarget() const { return scrolling_.targetValue(); }
+    [[nodiscard]] qint64 firstChangeMicros() const { return scrolling_.firstChangeMicros(); }
+    [[nodiscard]] QVector<int> scrollSamples() const { return scrolling_.frameValues(); }
+    void cancelSmoothScroll() { scrolling_.cancel(); }
+
+protected:
+    void wheelEvent(QWheelEvent* event) override {
+        if (!event->pixelDelta().isNull()) {
+            scrolling_.cancel();
+            QTreeWidget::wheelEvent(event);
+            return;
+        }
+        if (event->angleDelta().y() != 0) {
+            const int baseline = scrolling_.isRunning()
+                ? scrolling_.targetValue() : verticalScrollBar()->value();
+            const double scaled = -static_cast<double>(event->angleDelta().y()) *
+                                  verticalScrollBar()->singleStep() * 3.0 / 120.0;
+            wheel_fraction_ += scaled;
+            int movement = static_cast<int>(std::round(wheel_fraction_));
+            if (movement == 0) movement = scaled < 0 ? -1 : 1;
+            wheel_fraction_ -= movement;
+            const int destination = baseline + movement;
+            if (scrolling_.isRunning()) {
+                scrolling_.retargetTo(destination, 140, QEasingCurve::InOutQuad);
+            } else {
+                scrolling_.animateTo(destination, 140, QEasingCurve::InOutQuad);
+            }
+            event->accept();
+            return;
+        }
+        QTreeWidget::wheelEvent(event);
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        scrolling_.cancel();
+        QTreeWidget::mousePressEvent(event);
+    }
+
+    void keyPressEvent(QKeyEvent* event) override {
+        scrolling_.cancel();
+        QTreeWidget::keyPressEvent(event);
+    }
+
+private:
+    SmoothScrollController scrolling_;
+    double wheel_fraction_ = 0.0;
+};
+
 DocumentSidebar::DocumentSidebar(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("documentSidebar"));
     setAccessibleName(QStringLiteral("Document navigation"));
@@ -46,7 +128,7 @@ DocumentSidebar::DocumentSidebar(QWidget* parent) : QWidget(parent) {
     auto* label = new QLabel(QStringLiteral("OPEN DOCUMENTS"));
     label->setObjectName(QStringLiteral("sidebarSection"));
     layout->addWidget(label);
-    documents_ = new QTreeWidget;
+    documents_ = new SmoothTreeWidget;
     documents_->setObjectName(QStringLiteral("openDocuments"));
     documents_->setAccessibleName(QStringLiteral("Open documents"));
     documents_->setHeaderHidden(true);
@@ -83,7 +165,7 @@ DocumentSidebar::DocumentSidebar(QWidget* parent) : QWidget(parent) {
     auto* outline_label = new QLabel(QStringLiteral("OUTLINE"));
     outline_label->setObjectName(QStringLiteral("sidebarSection"));
     layout->addWidget(outline_label);
-    outline_ = new QTreeWidget;
+    outline_ = new SmoothTreeWidget;
     outline_->setObjectName(QStringLiteral("documentOutline"));
     outline_->setAccessibleName(QStringLiteral("Document heading outline"));
     outline_->setHeaderHidden(true);
@@ -95,7 +177,9 @@ DocumentSidebar::DocumentSidebar(QWidget* parent) : QWidget(parent) {
     outline_->setFrameShape(QFrame::NoFrame);
     outline_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     const auto activate = [this](QTreeWidgetItem* item) {
-        if (navigate && item) navigate(item->data(0, Qt::UserRole).toString());
+        if (!item) return;
+        outline_->revealItem(item, true);
+        if (navigate) navigate(item->data(0, Qt::UserRole).toString());
     };
     connect(outline_, &QTreeWidget::itemClicked, this, activate);
     connect(outline_, &QTreeWidget::itemActivated, this, activate);
@@ -121,6 +205,7 @@ void DocumentSidebar::setDocuments(const QStringList& filenames, int active_inde
 
 void DocumentSidebar::setOutline(const QJsonArray& outline) {
     outline_->clear();
+    outline_items_.clear();
     std::vector<std::pair<int, QTreeWidgetItem*>> parents;
     for (const auto& value : outline) {
         const auto entry = value.toObject();
@@ -131,8 +216,60 @@ void DocumentSidebar::setOutline(const QJsonArray& outline) {
         item->setText(0, entry.value("title").toString());
         item->setToolTip(0, item->text(0));
         item->setData(0, Qt::UserRole, entry.value("anchor").toString());
+        outline_items_.insert(entry.value("anchor").toString(), item);
         parents.emplace_back(level, item);
     }
     outline_->expandAll();
+}
+
+bool DocumentSidebar::revealOutlineAnchor(const QString& anchor, bool animate) {
+    const auto found = outline_items_.constFind(anchor);
+    if (found == outline_items_.cend()) return false;
+    outline_->revealItem(found.value(), animate);
+    return true;
+}
+
+bool DocumentSidebar::outlineScrollRunning() const {
+    return outline_->scrollRunning();
+}
+
+int DocumentSidebar::outlineScrollValue() const {
+    return outline_->verticalScrollBar()->value();
+}
+
+int DocumentSidebar::outlineScrollTarget() const {
+    return outline_->scrollTarget();
+}
+
+qint64 DocumentSidebar::outlineFirstChangeMicros() const {
+    return outline_->firstChangeMicros();
+}
+
+QVector<int> DocumentSidebar::outlineScrollSamples() const {
+    return outline_->scrollSamples();
+}
+
+bool DocumentSidebar::outlineAnchorVisible(const QString& anchor) const {
+    const auto found = outline_items_.constFind(anchor);
+    if (found == outline_items_.cend()) return false;
+    const auto bounds = outline_->visualItemRect(found.value());
+    return bounds.isValid() && bounds.top() >= 0 &&
+           bounds.bottom() <= outline_->viewport()->height();
+}
+
+bool DocumentSidebar::testPartialOutlineWheel() {
+    if (outline_->verticalScrollBar()->maximum() <= 0) return false;
+    outline_->cancelSmoothScroll();
+    outline_->verticalScrollBar()->setValue(0);
+    const QPointF position(8, 8);
+    QWheelEvent partial(position, outline_->viewport()->mapToGlobal(position.toPoint()),
+                        QPoint(), QPoint(0, -30), Qt::NoButton, Qt::NoModifier,
+                        Qt::NoScrollPhase, false);
+    QApplication::sendEvent(outline_->viewport(), &partial);
+    return partial.isAccepted() && outline_->scrollRunning() && outline_->scrollTarget() > 0;
+}
+
+void DocumentSidebar::cancelOutlineScroll() {
+    outline_->cancelSmoothScroll();
 }
 } // namespace moonmark::qt
