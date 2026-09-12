@@ -77,6 +77,18 @@ fn outline_navigation_survives_image_reflow_with_one_click() {
 }
 
 #[test]
+fn native_window_exposes_windows_caption_and_resize_semantics() {
+    let output = run_smoke("--smoke-native-window", "layout-transitions.md");
+    assert!(output.contains("native_window=ok"), "{output}");
+    assert!(output.contains("thick_frame=yes"), "{output}");
+    assert!(output.contains("caption_hit=ok"), "{output}");
+    assert!(output.contains("max_hit=ok"), "{output}");
+    assert!(output.contains("resize_hits=ok"), "{output}");
+    assert!(output.contains("buttons=ok"), "{output}");
+    assert!(output.contains("counters=stable"), "{output}");
+}
+
+#[test]
 fn qt_frontend_smoke_matrix() {
     let output = run_smoke("--smoke-image-geometry", "image-layout-regression.md");
     assert!(output.contains("images=ok"), "{output}");

@@ -4,6 +4,7 @@
 #include "document_zoom.h"
 #include "document_sidebar.h"
 #include "smooth_scroll_controller.h"
+#include "windows_window_frame.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
@@ -85,9 +86,7 @@
 
 #ifdef _WIN32
 #define NOMINMAX
-#include <dwmapi.h>
 #include <windows.h>
-#include <windowsx.h>
 #endif
 
 namespace {
@@ -2209,6 +2208,87 @@ public:
     }
 
     void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("native-window")) {
+            QTimer::singleShot(250, this, [this] {
+                using moonmark::qt::windows::HitRole;
+                const auto status = moonmark::qt::windows::nativeFrameStatus(this);
+                const auto role_at = [this](QWidget* widget) {
+                    return moonmark::qt::windows::hitTest(
+                        this, title_bar_, minimize_, maximize_, close_,
+                        widget->mapTo(this, widget->rect().center()), false);
+                };
+                const bool styles = status.thick_frame && status.system_menu &&
+                    status.minimize_box && status.maximize_box;
+                const bool minimize_hit = role_at(minimize_) == HitRole::Minimize;
+                const bool maximize_hit = role_at(maximize_) == HitRole::Maximize;
+                const bool close_hit = role_at(close_) == HitRole::Close;
+                const bool captions = minimize_hit && maximize_hit && close_hit;
+                const bool title = role_at(title_label_) == HitRole::Caption;
+                const bool edges =
+                    moonmark::qt::windows::hitTest(
+                        this, title_bar_, minimize_, maximize_, close_, QPoint(1, 1), false) ==
+                        HitRole::TopLeft &&
+                    moonmark::qt::windows::hitTest(
+                        this, title_bar_, minimize_, maximize_, close_,
+                        QPoint(width() / 2, 1), false) == HitRole::Top &&
+                    moonmark::qt::windows::hitTest(
+                        this, title_bar_, minimize_, maximize_, close_,
+                        QPoint(1, height() / 2), false) == HitRole::Left &&
+                    moonmark::qt::windows::hitTest(
+                        this, title_bar_, minimize_, maximize_, close_,
+                        QPoint(width() - 2, height() / 2), false) == HitRole::Right &&
+                    moonmark::qt::windows::hitTest(
+                        this, title_bar_, minimize_, maximize_, close_,
+                        QPoint(1, height() - 2), false) == HitRole::BottomLeft &&
+                    moonmark::qt::windows::hitTest(
+                        this, title_bar_, minimize_, maximize_, close_,
+                        QPoint(width() - 2, height() - 2), false) == HitRole::BottomRight;
+                const bool fullscreen_client = moonmark::qt::windows::hitTest(
+                    this, title_bar_, minimize_, maximize_, close_,
+                    title_label_->mapTo(this, title_label_->rect().center()), true) ==
+                    HitRole::Client;
+                const auto before = api_->backend_counters(backend_);
+                const auto constructions = document_->constructionCount();
+                const auto normal_geometry = geometry();
+                maximize_->click();
+                QTimer::singleShot(100, this,
+                    [this, status, styles, captions, minimize_hit, maximize_hit, close_hit,
+                     title, edges, fullscreen_client,
+                     before, constructions, normal_geometry] {
+                    const bool maximized = isMaximized();
+                    maximize_->click();
+                    QTimer::singleShot(100, this,
+                        [this, status, styles, captions, minimize_hit, maximize_hit, close_hit,
+                         title, edges, fullscreen_client,
+                         before, constructions, normal_geometry, maximized] {
+                        const auto after = api_->backend_counters(backend_);
+                        const bool restored = !isMaximized() && geometry() == normal_geometry;
+                        const bool counters = before.parse_count == after.parse_count &&
+                            before.load_count == after.load_count &&
+                            before.image_request_count == after.image_request_count &&
+                            constructions == document_->constructionCount();
+                        const bool ok = styles && captions && title && edges &&
+                            fullscreen_client && maximized && restored && counters;
+                        std::fprintf(stdout,
+                            "NATIVE_WINDOW styles=%s thick_frame=%s popup=%s "
+                            "caption_hit=%s max_hit=%s min_hit=%s close_hit=%s "
+                            "resize_hits=%s fullscreen_hit=%s buttons=%s counters=%s\n",
+                            styles ? "ok" : "failed", status.thick_frame ? "yes" : "no",
+                            status.popup ? "yes" : "no", title ? "ok" : "failed",
+                            maximize_hit ? "ok" : "failed", minimize_hit ? "ok" : "failed",
+                            close_hit ? "ok" : "failed", edges ? "ok" : "failed",
+                            fullscreen_client ? "client" : "failed",
+                            maximized && restored ? "ok" : "failed",
+                            counters ? "stable" : "changed");
+                        std::fprintf(stdout, "MOONMARK_SMOKE native_window=%s\n",
+                                     ok ? "ok" : "failed");
+                        std::fflush(stdout);
+                        QCoreApplication::exit(ok ? 0 : 19);
+                    });
+                });
+            });
+            return;
+        }
         if (mode == QStringLiteral("outline-reflow")) {
             QTimer::singleShot(0, this, [this] {
                 const auto before = api_->backend_counters(backend_);
@@ -2660,7 +2740,7 @@ public:
                             partial_wheel ? "ok" : "failed", sidebar_cancelled ? "ok" : "failed");
                         std::fprintf(stdout,
                             "MOTION_SIDEBAR_WIDTH samples=%d largest_jump=%d reversed=%s final=%d\n",
-                            sidebar_width_samples_.size(), width_largest_jump,
+                            static_cast<int>(sidebar_width_samples_.size()), width_largest_jump,
                             width_retarget ? "ok" : "failed", sidebar_->width());
                         std::fprintf(stdout,
                             "MOONMARK_SMOKE motion=%s counters=%s image_request_delta=%llu\n",
@@ -3135,32 +3215,9 @@ protected:
 #ifdef _WIN32
     bool nativeEvent(const QByteArray& event_type, void* message, qintptr* result) override {
         Q_UNUSED(event_type);
-        auto* native = static_cast<MSG*>(message);
-        if (native->message == WM_NCHITTEST && !fullscreen_) {
-            const auto x = GET_X_LPARAM(native->lParam);
-            const auto y = GET_Y_LPARAM(native->lParam);
-            RECT rectangle{};
-            GetWindowRect(reinterpret_cast<HWND>(winId()), &rectangle);
-            const int border = std::max(5, static_cast<int>(6 * devicePixelRatioF()));
-            const bool left = x < rectangle.left + border;
-            const bool right = x >= rectangle.right - border;
-            const bool top = y < rectangle.top + border;
-            const bool bottom = y >= rectangle.bottom - border;
-            if (top && left) *result = HTTOPLEFT;
-            else if (top && right) *result = HTTOPRIGHT;
-            else if (bottom && left) *result = HTBOTTOMLEFT;
-            else if (bottom && right) *result = HTBOTTOMRIGHT;
-            else if (left) *result = HTLEFT;
-            else if (right) *result = HTRIGHT;
-            else if (top) *result = HTTOP;
-            else if (bottom) *result = HTBOTTOM;
-            else return QWidget::nativeEvent(event_type, message, result);
+        if (moonmark::qt::windows::handleNativeFrameEvent(
+                this, title_bar_, minimize_, maximize_, close_, fullscreen_, message, result))
             return true;
-        }
-        if (native->message == WM_SYSKEYDOWN && native->wParam == VK_SPACE) {
-            SendMessageW(reinterpret_cast<HWND>(winId()), WM_SYSCOMMAND, SC_KEYMENU, VK_SPACE);
-            return true;
-        }
         return QWidget::nativeEvent(event_type, message, result);
     }
 #endif
@@ -3460,6 +3517,11 @@ private:
         } else {
             showNormal();
         }
+#ifdef _WIN32
+        QTimer::singleShot(0, this, [this] {
+            moonmark::qt::windows::installNativeFrame(this);
+        });
+#endif
     }
 
     void updateStatus() {
@@ -3647,6 +3709,7 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
     }
     MoonmarkWindow window(api);
     window.show();
+    moonmark::qt::windows::installNativeFrame(&window);
     QString smoke_mode;
     QStringList document_paths;
     for (int index = 1; index < qt_argc; ++index) {
@@ -3667,6 +3730,8 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
             smoke_mode = QStringLiteral("layout");
         } else if (argument == QStringLiteral("--smoke-maximize")) {
             smoke_mode = QStringLiteral("maximize");
+        } else if (argument == QStringLiteral("--smoke-native-window")) {
+            smoke_mode = QStringLiteral("native-window");
         } else if (argument == QStringLiteral("--smoke-layout-normal")) {
             smoke_mode = QStringLiteral("layout-normal");
         } else if (argument == QStringLiteral("--smoke-watcher")) {

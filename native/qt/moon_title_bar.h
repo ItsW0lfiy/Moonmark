@@ -10,6 +10,7 @@ public:
     enum class Action { Minimize, Maximize, Close };
     explicit CaptionButton(Action action, QWidget* parent = nullptr);
     void setMaximized(bool maximized);
+    void setNativeInteraction(bool hovered, bool pressed);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -17,6 +18,8 @@ protected:
 private:
     Action action_;
     bool maximized_ = false;
+    bool native_hovered_ = false;
+    bool native_pressed_ = false;
 };
 
 class MoonTitleBar final : public QWidget {

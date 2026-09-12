@@ -8,16 +8,20 @@ Precision pixel/touchpad input, scrollbar dragging, keyboard paging/Home/End, ou
 
 `--smoke-scroll-profile` enables a bounded in-memory frame trace and reports input-to-first-paint, paint-interval p50/p95/p99/worst, threshold counts over 16.67/25/33.3/50 ms, paint cost, scrollbar/value-change cost, and image scan/delivery cost. It emits one summary rather than logging each frame. `MOONMARK_SCROLL_PROFILE_OUTPUT` optionally writes that summary to a file, which is useful for the Windows GUI-subsystem Release executable.
 
-Moonmark uses one frameless Qt Widgets window with a custom achromatic title bar. The dedicated `MoonTitleBar` component owns title-region move, double-click, and system-menu input; Windows-specific hit testing remains contained in the Qt adapter. Document/core state remains independent.
+Moonmark uses one frameless Qt Widgets window with a custom achromatic title bar. The dedicated `MoonTitleBar` component retains Qt's `QWindow::startSystemMove()` path as the portable fallback. On Windows, `windows_window_frame.*` supplies the native non-client contract while Qt continues to own and paint the HWND. Document/core state remains independent.
 
 Rust tracks three semantic modes: `Normal`, `Maximized`, and `BorderlessFullscreen`.
 
 Normal maximize uses the operating system's standard maximize/restore operation. Moonmark chrome remains visible and the Windows work area keeps the taskbar visible. F11 is separate same-window borderless fullscreen: Moonmark preserves the prior Normal/Maximized mode, hides its title bar (including document actions) and optional diagnostics row, fills the current screen through Qt, and restores the saved mode on F11 or Escape.
 
-The Windows adapter handles edge/corner `WM_NCHITTEST`, system move, caption actions, Alt+Space, and the right-click system menu. Double-click title-bar maximize/restore is implemented by the title-bar widget. The maximize button intentionally does not opt into the previously rejected custom Snap Layout hover treatment.
+Qt's frameless HWND already carried the system-menu and minimize/maximize capability bits, but it lacked `WS_THICKFRAME` and reported only resize edges through `WM_NCHITTEST`. The Windows adapter adds the missing resize/snap eligibility bit without replacing the frameless Qt window or forcing a visible native caption. Forcing the full `WS_CAPTION` style onto this qwindows backing-store path was tested and rejected because it invalidated client painting.
+
+The adapter reports live Qt widget geometry as `HTCAPTION`, `HTMINBUTTON`, `HTMAXBUTTON`, `HTCLOSE`, and the appropriate resize edge/corner values. Moonmark-owned buttons and other interactive title-bar children are excluded from the caption region. Default Windows non-client handling therefore owns system move, native edge snapping, caption-button semantics, and double-click maximize/restore; the contained adapter owns only geometry classification, caption visual feedback, work-area maximize bounds, Alt+Space, and the right-click system menu.
+
+On Windows 11 the custom maximize region returns the documented `HTMAXBUTTON` result required for the genuine system Snap Layout flyout. Moonmark does not draw or simulate that flyout. The native smoke validates the style and hit-test contract; actual hover presentation remains a physical Windows acceptance check because it is DWM-owned.
 
 Resize, zoom, maximize, F11, and restoration operate on the existing QTextDocument. The native smoke matrix asserts zero parse, file-load, document-construction, and image-request deltas across those transitions.
 
-Physical Windows checks still required before release: Windows 10/11 snapping, mixed-DPI multi-monitor movement, exact taskbar work-area behavior, title-bar drag/resize cursors, system-menu details, focus, and Normal-to-F11 geometry restoration on more than one monitor.
+Physical Windows checks still required before release: top/left/right edge snapping and Snap Assist, maximized-window tear-off, the Windows 11 Snap Layout hover flyout, mixed-DPI multi-monitor movement, exact taskbar work-area behavior, title-bar drag/resize cursors, system-menu details, focus, and Normal-to-F11 geometry restoration on more than one monitor.
 
 Dev.4 adds a collapsible sidebar and 48px breadcrumb header. F11 hides the sidebar as well as the header; leaving it restores the user's sidebar preference subject to responsive width. The navigation smoke covers keyboard outline activation, automatic narrow-window collapse, and fullscreen chrome visibility without document reconstruction.

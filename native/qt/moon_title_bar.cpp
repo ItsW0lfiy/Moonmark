@@ -31,11 +31,19 @@ void CaptionButton::setMaximized(bool maximized) {
     update();
 }
 
+void CaptionButton::setNativeInteraction(bool hovered, bool pressed) {
+    if (native_hovered_ == hovered && native_pressed_ == pressed) return;
+    native_hovered_ = hovered;
+    native_pressed_ = pressed;
+    update();
+}
+
 void CaptionButton::paintEvent(QPaintEvent*) {
     QPainter painter(this);
-    if (underMouse() || isDown()) {
+    if (underMouse() || isDown() || native_hovered_ || native_pressed_) {
         painter.fillRect(rect(), QColor(action_ == Action::Close ? "#612f2f" :
-                                       isDown() ? style::colour::active : style::colour::hover));
+                                       isDown() || native_pressed_ ? style::colour::active :
+                                                                   style::colour::hover));
     }
     if (hasFocus()) {
         painter.setPen(QColor(style::colour::silver));
