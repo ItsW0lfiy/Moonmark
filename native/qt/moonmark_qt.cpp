@@ -451,12 +451,19 @@ public:
         image_prefetch_.setSingleShot(true);
         QObject::connect(&image_prefetch_, &QTimer::timeout, this,
                          [this] { queueVisibleImages(); });
+        navigation_settle_.setSingleShot(true);
+        QObject::connect(&navigation_settle_, &QTimer::timeout, this,
+                         [this] { settleNavigation(); });
         QObject::connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
             QElapsedTimer value_change;
             value_change.start();
             scroll_trace_.recordScrollChange();
             scheduleImagePrefetch();
             scroll_trace_.recordValueChange(value_change.nsecsElapsed() / 1000);
+        });
+        QObject::connect(verticalScrollBar(), &QScrollBar::rangeChanged, this,
+                         [this](int, int) {
+            if (navigationActive()) scheduleNavigationRetarget();
         });
         QObject::connect(verticalScrollBar(), &QScrollBar::sliderPressed, this,
                          [this] { cancelScrollMotion(); });
@@ -495,6 +502,12 @@ public:
         code_frame_bounds_.clear();
         code_frame_bounds_dirty_ = true;
         anchor_positions_.clear();
+        navigation_anchor_.clear();
+        completed_navigation_anchor_.clear();
+        navigation_target_clamped_ = false;
+        completed_navigation_clamped_ = false;
+        navigation_settle_.stop();
+        ++navigation_epoch_;
         title_ = root.value("title").toString(QStringLiteral("Moonmark"));
         settings_ = root.value("settings").toObject();
         metrics_ = root.value("metrics").toObject();
@@ -509,7 +522,10 @@ public:
                                  .font());
         setDocument(next);
         QObject::connect(next->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged,
-                         this, [this] { scheduleNavigationRetarget(); });
+                         this, [this] {
+            ++layout_generation_;
+            scheduleNavigationRetarget();
+        });
         applyDocumentWidth();
 
         QTextCursor cursor(next);
@@ -743,8 +759,9 @@ public:
         const int percent = std::clamp(zoom_percent_ + delta, 60, 220);
         if (percent == zoom_percent_) return;
         const auto selection = textCursor();
-        const auto anchor = cursorForPosition(QPoint(0, 0));
-        const int anchor_y = cursorRect(anchor).top();
+        const bool explicit_navigation = navigationActive();
+        const auto anchor = explicit_navigation ? QTextCursor{} : cursorForPosition(QPoint(0, 0));
+        const int anchor_y = explicit_navigation ? 0 : cursorRect(anchor).top();
         const bool at_top = verticalScrollBar()->value() == 0;
         zoom_percent_ = percent;
         QElapsedTimer profile;
@@ -759,8 +776,10 @@ public:
         document()->setLayoutEnabled(true);
         invalidateCodeFrameBounds();
         setTextCursor(selection);
-        verticalScrollBar()->setValue(at_top ? 0 : verticalScrollBar()->value() +
-                                        cursorRect(anchor).top() - anchor_y);
+        if (!explicit_navigation) {
+            verticalScrollBar()->setValue(at_top ? 0 : verticalScrollBar()->value() +
+                                            cursorRect(anchor).top() - anchor_y);
+        }
         setUpdatesEnabled(true);
         scheduleNavigationRetarget();
         if (zoomChanged) zoomChanged(zoom_percent_);
@@ -776,6 +795,36 @@ public:
         return scroll_controller_.isRunning();
     }
     [[nodiscard]] bool navigationActive() const { return !navigation_anchor_.isEmpty(); }
+    [[nodiscard]] QString navigationAnchor() const { return navigation_anchor_; }
+    [[nodiscard]] QString completedNavigationAnchor() const {
+        return completed_navigation_anchor_;
+    }
+    [[nodiscard]] quint64 navigationEpoch() const { return navigation_epoch_; }
+    [[nodiscard]] quint64 layoutGeneration() const { return layout_generation_; }
+    [[nodiscard]] int pendingNavigationImages() const {
+        const auto found = anchor_positions_.constFind(navigation_anchor_);
+        if (found == anchor_positions_.cend()) return 0;
+        const int heading_position = found.value();
+        return static_cast<int>(std::count_if(
+            image_occurrences_.cbegin(), image_occurrences_.cend(),
+            [this, heading_position](const auto& image) {
+                if (!image.requested || image.loaded || image.failed) return false;
+                return image.position < heading_position || navigation_target_clamped_;
+            }));
+    }
+    [[nodiscard]] bool navigationTargetClamped() const {
+        return navigation_target_clamped_;
+    }
+    [[nodiscard]] bool completedNavigationClamped() const {
+        return completed_navigation_clamped_;
+    }
+    void setImageDeliveryPausedForTest(bool paused) {
+        image_delivery_paused_for_test_ = paused;
+        if (!paused && pendingImageDecodes() > 0) image_poll_.start();
+    }
+    [[nodiscard]] bool hasAnchor(const QString& anchor) const {
+        return anchor_positions_.contains(anchor);
+    }
     [[nodiscard]] const QVector<int>& scrollMotionSamples() const {
         return scroll_controller_.frameValues();
     }
@@ -803,9 +852,23 @@ public:
         cursor.setPosition(std::min(found.value() + 1, document()->characterCount() - 1));
         return cursorRect(cursor).top();
     }
+    [[nodiscard]] int anchorDocumentY(const QString& anchor) const {
+        const int viewport_y = anchorViewportY(anchor);
+        if (viewport_y == std::numeric_limits<int>::min()) return viewport_y;
+        return viewport_y + verticalScrollBar()->value();
+    }
+    [[nodiscard]] int viewportAnchorPosition() const {
+        return captureViewportAnchor().position;
+    }
     std::function<void(int)> zoomChanged;
 
     void navigateToAnchor(const QString& anchor, bool animate = true) {
+        scroll_controller_.cancel();
+        navigation_settle_.stop();
+        ++navigation_epoch_;
+        navigation_anchor_.clear();
+        navigation_target_clamped_ = false;
+        completed_navigation_clamped_ = false;
         navigation_request_elapsed_.restart();
         navigation_first_change_us_ = -1;
         navigation_first_paint_us_ = -1;
@@ -817,6 +880,7 @@ public:
         navigation_lookup_us_ = phase.nsecsElapsed() / 1000;
         if (found == anchor_positions_.cend()) return;
         navigation_anchor_ = anchor;
+        completed_navigation_anchor_.clear();
         const auto destination = anchorDestination(anchor);
         navigation_geometry_us_ = phase.nsecsElapsed() / 1000 - navigation_lookup_us_;
         if (!destination.has_value()) {
@@ -825,7 +889,13 @@ public:
         }
         Q_UNUSED(animate);
         scroll_controller_.moveDirectlyTo(*destination);
-        settleNavigation();
+        // The immediate jump uses current live geometry. Queue images around the
+        // landing before deciding whether the semantic target has settled: the
+        // scrollbar value change normally schedules prefetch for a later turn.
+        queueVisibleImages();
+        navigation_corrected_generation_ = layout_generation_;
+        navigation_stable_passes_ = 0;
+        scheduleNavigationSettlement();
         navigation_controller_start_us_ = phase.nsecsElapsed() / 1000 -
                                           navigation_lookup_us_ - navigation_geometry_us_;
     }
@@ -1012,11 +1082,12 @@ protected:
     }
 
     void resizeEvent(QResizeEvent* event) override {
-        const auto anchor = captureViewportAnchor();
+        const bool explicit_navigation = navigationActive();
+        const auto anchor = explicit_navigation ? ViewportAnchor{} : captureViewportAnchor();
         QTextEdit::resizeEvent(event);
         applyDocumentWidth();
         resizeLoadedImages();
-        restoreViewportAnchor(anchor);
+        if (!explicit_navigation) restoreViewportAnchor(anchor);
         invalidateCodeFrameBounds();
         scheduleNavigationRetarget();
         QTimer::singleShot(0, this, [this] { queueVisibleImages(); });
@@ -1159,6 +1230,8 @@ protected:
 private:
     void cancelScrollMotion() {
         navigation_anchor_.clear();
+        navigation_settle_.stop();
+        ++navigation_epoch_;
         scroll_controller_.cancel();
     }
 
@@ -1166,14 +1239,26 @@ private:
         return qEnvironmentVariable("MOONMARK_REDUCED_MOTION") == QStringLiteral("1");
     }
 
-    [[nodiscard]] std::optional<int> anchorDestination(const QString& anchor) const {
+    [[nodiscard]] std::optional<int> anchorDestination(const QString& anchor) {
         const auto found = anchor_positions_.constFind(anchor);
         if (found == anchor_positions_.cend()) return std::nullopt;
         QTextCursor cursor(document());
         cursor.setPosition(std::min(found.value() + 1, document()->characterCount() - 1));
         const int rendered_top = cursorRect(cursor).top() + verticalScrollBar()->value();
-        return std::clamp(rendered_top - navigationInset(), verticalScrollBar()->minimum(),
-                          verticalScrollBar()->maximum());
+        const int requested = rendered_top - navigationInset();
+        const int destination = std::clamp(requested, verticalScrollBar()->minimum(),
+                                           verticalScrollBar()->maximum());
+        navigation_target_clamped_ = destination != requested;
+        return destination;
+    }
+
+    [[nodiscard]] bool hasPendingNavigationImages() const {
+        return pendingNavigationImages() > 0;
+    }
+
+    void scheduleNavigationSettlement() {
+        if (navigation_anchor_.isEmpty()) return;
+        navigation_settle_.start(32);
     }
 
     void scheduleNavigationRetarget() {
@@ -1192,22 +1277,47 @@ private:
             cancelScrollMotion();
             return;
         }
-        if (*destination == verticalScrollBar()->value()) return;
-        ++navigation_retarget_count_;
-        scroll_controller_.moveDirectlyTo(*destination);
+        if (*destination != verticalScrollBar()->value()) {
+            ++navigation_retarget_count_;
+            scroll_controller_.moveDirectlyTo(*destination);
+        }
+        navigation_corrected_generation_ = layout_generation_;
+        navigation_stable_passes_ = 0;
+        queueVisibleImages();
+        scheduleNavigationSettlement();
     }
 
     void settleNavigation() {
         if (navigation_anchor_.isEmpty()) return;
         const auto destination = anchorDestination(navigation_anchor_);
-        if (destination.has_value() && std::abs(*destination - verticalScrollBar()->value()) > 1) {
+        if (!destination.has_value()) {
+            cancelScrollMotion();
+            return;
+        }
+        const bool generation_changed = navigation_corrected_generation_ != layout_generation_;
+        const bool needs_correction = std::abs(*destination - verticalScrollBar()->value()) > 1;
+        if (needs_correction) {
+            ++navigation_retarget_count_;
             scroll_controller_.moveDirectlyTo(*destination);
         }
-        // Keep the semantic destination alive until image requests started by this
-        // navigation settle. A decoded image can change every following block's
-        // geometry after the first animation has reached its provisional target.
-        if (pendingImageDecodes() > 0) return;
+        navigation_corrected_generation_ = layout_generation_;
+        queueVisibleImages();
+        if (generation_changed || needs_correction || hasPendingNavigationImages()) {
+            navigation_stable_passes_ = 0;
+            scheduleNavigationSettlement();
+            return;
+        }
+        // Keep one quiet debounce interval after the last relevant layout/range
+        // change so queued Qt layout notifications cannot arrive after ownership
+        // has already fallen back to the generic viewport anchor.
+        if (navigation_stable_passes_++ == 0) {
+            scheduleNavigationSettlement();
+            return;
+        }
+        completed_navigation_anchor_ = navigation_anchor_;
+        completed_navigation_clamped_ = navigation_target_clamped_;
         navigation_anchor_.clear();
+        navigation_target_clamped_ = false;
     }
 
     void buildBlocks(QTextCursor& cursor, std::size_t& index, int stop_kind, int depth) {
@@ -1767,6 +1877,7 @@ private:
     }
 
     void pollImages() {
+        if (image_delivery_paused_for_test_) return;
         // Completed decodes can wait briefly; applying QTextImageFormats forces
         // native relayout and must not consume the rapid-scroll frame budget.
         if (scroll_controller_.isRunning()) return;
@@ -1971,7 +2082,15 @@ private:
     QString title_ = QStringLiteral("Moonmark");
     QHash<QString, int> anchor_positions_;
     QString navigation_anchor_;
+    QString completed_navigation_anchor_;
     bool navigation_retarget_pending_ = false;
+    bool navigation_target_clamped_ = false;
+    bool completed_navigation_clamped_ = false;
+    bool image_delivery_paused_for_test_ = false;
+    quint64 navigation_epoch_ = 0;
+    quint64 layout_generation_ = 0;
+    quint64 navigation_corrected_generation_ = 0;
+    int navigation_stable_passes_ = 0;
     QElapsedTimer navigation_request_elapsed_;
     qint64 navigation_lookup_us_ = 0;
     qint64 navigation_geometry_us_ = 0;
@@ -1980,6 +2099,7 @@ private:
     qint64 navigation_first_paint_us_ = -1;
     int navigation_retarget_count_ = 0;
     int navigation_image_retarget_count_ = 0;
+    QTimer navigation_settle_;
     QTimer image_poll_;
     QTimer image_prefetch_;
     QTimer autoscroll_;
@@ -2089,6 +2209,127 @@ public:
     }
 
     void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("outline-reflow")) {
+            QTimer::singleShot(0, this, [this] {
+                const auto before = api_->backend_counters(backend_);
+                const auto constructions = document_->constructionCount();
+                document_->setImageDeliveryPausedForTest(true);
+
+                const bool rapid = document_->hasAnchor(QStringLiteral("first-target")) &&
+                    document_->hasAnchor(QStringLiteral("latest-target"));
+                const bool missing = document_->hasAnchor(QStringLiteral("target-after-missing"));
+                const bool failed = document_->hasAnchor(QStringLiteral("target-after-failure"));
+                const bool bottom = document_->hasAnchor(QStringLiteral("target-near-bottom"));
+                const QString target = rapid ? QStringLiteral("latest-target")
+                    : missing ? QStringLiteral("target-after-missing")
+                    : failed ? QStringLiteral("target-after-failure")
+                    : bottom ? QStringLiteral("target-near-bottom")
+                    : QStringLiteral("target-heading");
+
+                bool activation = true;
+                bool latest_wins = true;
+                quint64 first_epoch = 0;
+                if (rapid) {
+                    activation &= sidebar_->activateOutlineAnchorForTest(
+                        QStringLiteral("first-target"));
+                    first_epoch = document_->navigationEpoch();
+                    latest_wins &= document_->navigationAnchor() == QStringLiteral("first-target");
+                }
+                activation &= sidebar_->activateOutlineAnchorForTest(target);
+                latest_wins &= document_->navigationAnchor() == target &&
+                    (!rapid || document_->navigationEpoch() > first_epoch);
+
+                const int provisional_document_y = document_->anchorDocumentY(target);
+                const int provisional_viewport_y = document_->anchorViewportY(target);
+                const int provisional_scroll = document_->verticalScrollBar()->value();
+                const int provisional_maximum = document_->verticalScrollBar()->maximum();
+                const int provisional_viewport_anchor = document_->viewportAnchorPosition();
+                const int pending = document_->pendingNavigationImages();
+                const quint64 generation = document_->layoutGeneration();
+                const bool initially_clamped = document_->navigationTargetClamped();
+                const bool immediate = initially_clamped ||
+                    std::abs(provisional_viewport_y - document_->navigationInset()) <= 3;
+                const bool expected_pending = missing ? pending == 0 : pending > 0;
+                const bool no_motion = !document_->scrollMotionRunning();
+
+                std::fprintf(stdout,
+                    "OUTLINE_REFLOW_INITIAL target=%s owner=%s generation=%llu heading_y=%d "
+                    "viewport_y=%d scroll=%d maximum=%d pending=%d clamped=%s "
+                    "viewport_anchor=%d immediate=%s motion=%s\n",
+                    target.toUtf8().constData(), document_->navigationAnchor().toUtf8().constData(),
+                    static_cast<unsigned long long>(generation), provisional_document_y,
+                    provisional_viewport_y, provisional_scroll, provisional_maximum, pending,
+                    initially_clamped ? "yes" : "no", provisional_viewport_anchor,
+                    immediate ? "yes" : "no", no_motion ? "stopped" : "running");
+
+                document_->setImageDeliveryPausedForTest(false);
+                auto* poll = new QTimer(this);
+                auto elapsed = std::make_shared<QElapsedTimer>();
+                elapsed->start();
+                poll->setInterval(10);
+                QObject::connect(poll, &QTimer::timeout, this,
+                    [this, poll, elapsed, before, constructions, target, rapid, missing, failed,
+                     activation, latest_wins, expected_pending, immediate, no_motion,
+                     provisional_document_y, provisional_maximum, generation] {
+                    if ((document_->navigationActive() ||
+                         document_->pendingImageDecodes() > 0) && elapsed->elapsed() < 6000) {
+                        return;
+                    }
+                    poll->stop();
+                    poll->deleteLater();
+
+                    const int final_document_y = document_->anchorDocumentY(target);
+                    const int final_viewport_y = document_->anchorViewportY(target);
+                    const int final_scroll = document_->verticalScrollBar()->value();
+                    const int final_maximum = document_->verticalScrollBar()->maximum();
+                    const bool final_clamped = document_->completedNavigationClamped();
+                    const bool landing = final_clamped
+                        ? final_scroll == final_maximum
+                        : std::abs(final_viewport_y - document_->navigationInset()) <= 3;
+                    const bool geometry_changed = missing || failed ||
+                        final_document_y > provisional_document_y + 100;
+                    const bool owner = document_->completedNavigationAnchor() == target;
+                    const bool completed = !document_->navigationActive() &&
+                        document_->pendingImageDecodes() == 0 && elapsed->elapsed() < 6000;
+                    const bool motion_stopped = !document_->scrollMotionRunning();
+                    const bool range_expanded = final_maximum > provisional_maximum;
+                    const auto after = api_->backend_counters(backend_);
+                    const bool counters = before.parse_count == after.parse_count &&
+                        before.load_count == after.load_count &&
+                        constructions == document_->constructionCount();
+                    const bool layout_changed = missing || failed ||
+                        document_->layoutGeneration() > generation;
+                    const bool ok = activation && latest_wins && expected_pending && immediate &&
+                        no_motion && landing && geometry_changed && owner && completed &&
+                        motion_stopped && counters && layout_changed;
+
+                    std::fprintf(stdout,
+                        "OUTLINE_REFLOW_FINAL target=%s owner=%s generation=%llu heading_y=%d "
+                        "viewport_y=%d scroll=%d maximum=%d clamped=%s range_expanded=%s "
+                        "retargets=%d image_retargets=%d viewport_anchor=%d motion=%s\n",
+                        target.toUtf8().constData(),
+                        document_->completedNavigationAnchor().toUtf8().constData(),
+                        static_cast<unsigned long long>(document_->layoutGeneration()),
+                        final_document_y, final_viewport_y, final_scroll, final_maximum,
+                        final_clamped ? "yes" : "no", range_expanded ? "yes" : "no",
+                        document_->navigationRetargetCount(),
+                        document_->navigationImageRetargetCount(),
+                        document_->viewportAnchorPosition(),
+                        motion_stopped ? "stopped" : "running");
+                    std::fprintf(stdout,
+                        "MOONMARK_SMOKE outline_reflow=%s one_click=%s latest_wins=%s "
+                        "counters=%s scenario=%s\n",
+                        ok ? "ok" : "failed", owner && landing ? "ok" : "failed",
+                        latest_wins ? "ok" : "failed", counters ? "stable" : "changed",
+                        rapid ? "rapid" : missing ? "missing" : failed ? "failed" :
+                            final_clamped ? "bottom" : "image");
+                    std::fflush(stdout);
+                    QCoreApplication::exit(ok ? 0 : 18);
+                });
+                poll->start();
+            });
+            return;
+        }
         if (mode == QStringLiteral("scroll-profile")) {
             // Measure steady scrolling after the initial document/layout paint;
             // startup construction is covered by separate load benchmarks.
@@ -3440,6 +3681,8 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
             smoke_mode = QStringLiteral("plaintext");
         } else if (argument == QStringLiteral("--smoke-motion")) {
             smoke_mode = QStringLiteral("motion-v2");
+        } else if (argument == QStringLiteral("--smoke-outline-reflow")) {
+            smoke_mode = QStringLiteral("outline-reflow");
         } else if (argument == QStringLiteral("--smoke-scroll-profile")) {
             smoke_mode = QStringLiteral("scroll-profile");
         } else if (argument == QStringLiteral("--smoke-multidoc-watcher")) {

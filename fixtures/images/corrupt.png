@@ -1,0 +1,1 @@
+This is intentionally not valid PNG data. It exercises asynchronous image decode failure.

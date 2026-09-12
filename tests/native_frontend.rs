@@ -46,6 +46,37 @@ fn numeric_metric(output: &str, name: &str) -> u64 {
 }
 
 #[test]
+fn outline_navigation_survives_image_reflow_with_one_click() {
+    for fixture_name in [
+        "outline-reflow-single.md",
+        "outline-reflow-multiple.md",
+        "outline-reflow-missing.md",
+        "outline-reflow-failed.md",
+        "outline-reflow-bottom.md",
+        "outline-reflow-rapid.md",
+    ] {
+        let output = run_smoke("--smoke-outline-reflow", fixture_name);
+        assert!(
+            output.contains("outline_reflow=ok"),
+            "{fixture_name}: {output}"
+        );
+        assert!(output.contains("one_click=ok"), "{fixture_name}: {output}");
+        assert!(
+            output.contains("latest_wins=ok"),
+            "{fixture_name}: {output}"
+        );
+        assert!(
+            output.contains("counters=stable"),
+            "{fixture_name}: {output}"
+        );
+        assert!(
+            output.contains("motion=stopped"),
+            "{fixture_name}: {output}"
+        );
+    }
+}
+
+#[test]
 fn qt_frontend_smoke_matrix() {
     let output = run_smoke("--smoke-image-geometry", "image-layout-regression.md");
     assert!(output.contains("images=ok"), "{output}");

@@ -19,6 +19,7 @@ public:
     void setDocuments(const QStringList& filenames, int active_index);
     void setOutline(const QJsonArray& outline);
     bool revealOutlineAnchor(const QString& anchor, bool animate = true);
+    bool activateOutlineAnchorForTest(const QString& anchor);
     [[nodiscard]] bool outlineScrollRunning() const;
     [[nodiscard]] int outlineScrollValue() const;
     [[nodiscard]] int outlineScrollTarget() const;
@@ -34,6 +35,8 @@ public:
     std::function<void(int)> close_document;
 
 private:
+    void activateOutlineItem(QTreeWidgetItem* item);
+
     QPushButton* reload_;
     SmoothTreeWidget* documents_;
     SmoothTreeWidget* outline_;

@@ -177,11 +177,7 @@ DocumentSidebar::DocumentSidebar(QWidget* parent) : QWidget(parent) {
     outline_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     outline_->setFrameShape(QFrame::NoFrame);
     outline_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    const auto activate = [this](QTreeWidgetItem* item) {
-        if (!item) return;
-        outline_->revealItem(item, false);
-        if (navigate) navigate(item->data(0, Qt::UserRole).toString());
-    };
+    const auto activate = [this](QTreeWidgetItem* item) { activateOutlineItem(item); };
     connect(outline_, &QTreeWidget::itemClicked, this, activate);
     connect(outline_, &QTreeWidget::itemActivated, this, activate);
     layout->addWidget(outline_, 1);
@@ -228,6 +224,19 @@ bool DocumentSidebar::revealOutlineAnchor(const QString& anchor, bool animate) {
     if (found == outline_items_.cend()) return false;
     outline_->revealItem(found.value(), animate);
     return true;
+}
+
+bool DocumentSidebar::activateOutlineAnchorForTest(const QString& anchor) {
+    const auto found = outline_items_.constFind(anchor);
+    if (found == outline_items_.cend()) return false;
+    activateOutlineItem(found.value());
+    return true;
+}
+
+void DocumentSidebar::activateOutlineItem(QTreeWidgetItem* item) {
+    if (!item) return;
+    outline_->revealItem(item, false);
+    if (navigate) navigate(item->data(0, Qt::UserRole).toString());
 }
 
 bool DocumentSidebar::outlineScrollRunning() const {
