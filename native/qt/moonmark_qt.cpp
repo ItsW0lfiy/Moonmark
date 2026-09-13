@@ -2342,10 +2342,10 @@ public:
                 };
                 const bool styles = status.thick_frame && status.system_menu &&
                     status.minimize_box && status.maximize_box;
-                const bool minimize_hit = role_at(minimize_) == HitRole::Minimize;
+                const bool minimize_client = role_at(minimize_) == HitRole::Client;
                 const bool maximize_hit = role_at(maximize_) == HitRole::Maximize;
-                const bool close_hit = role_at(close_) == HitRole::Close;
-                const bool captions = minimize_hit && maximize_hit && close_hit;
+                const bool close_client = role_at(close_) == HitRole::Client;
+                const bool captions = minimize_client && maximize_hit && close_client;
                 const bool title = role_at(title_label_) == HitRole::Caption;
                 const bool edges =
                     moonmark::qt::windows::hitTest(
@@ -2373,15 +2373,26 @@ public:
                 const auto before = api_->backend_counters(backend_);
                 const auto constructions = document_->constructionCount();
                 const auto normal_geometry = geometry();
-                maximize_->click();
-                QTimer::singleShot(100, this,
-                    [this, status, styles, captions, minimize_hit, maximize_hit, close_hit,
-                     title, edges, fullscreen_client,
-                     before, constructions, normal_geometry] {
-                    const bool maximized = isMaximized();
+                const auto native_maximize_click = [this] {
+#ifdef _WIN32
+                    const QPoint global = maximize_->mapToGlobal(maximize_->rect().center());
+                    const LPARAM point = MAKELPARAM(global.x(), global.y());
+                    const HWND handle = reinterpret_cast<HWND>(winId());
+                    SendMessageW(handle, WM_NCLBUTTONDOWN, HTMAXBUTTON, point);
+                    SendMessageW(handle, WM_NCLBUTTONUP, HTMAXBUTTON, point);
+#else
                     maximize_->click();
+#endif
+                };
+                native_maximize_click();
+                QTimer::singleShot(100, this,
+                    [this, status, styles, captions, minimize_client, maximize_hit, close_client,
+                     title, edges, fullscreen_client,
+                     before, constructions, normal_geometry, native_maximize_click] {
+                    const bool maximized = isMaximized();
+                    native_maximize_click();
                     QTimer::singleShot(100, this,
-                        [this, status, styles, captions, minimize_hit, maximize_hit, close_hit,
+                        [this, status, styles, captions, minimize_client, maximize_hit, close_client,
                          title, edges, fullscreen_client,
                          before, constructions, normal_geometry, maximized] {
                         const auto after = api_->backend_counters(backend_);
@@ -2394,12 +2405,13 @@ public:
                             fullscreen_client && maximized && restored && counters;
                         std::fprintf(stdout,
                             "NATIVE_WINDOW styles=%s thick_frame=%s popup=%s "
-                            "caption_hit=%s max_hit=%s min_hit=%s close_hit=%s "
+                            "caption_hit=%s max_hit=%s min_client=%s close_client=%s "
                             "resize_hits=%s fullscreen_hit=%s buttons=%s counters=%s\n",
                             styles ? "ok" : "failed", status.thick_frame ? "yes" : "no",
                             status.popup ? "yes" : "no", title ? "ok" : "failed",
-                            maximize_hit ? "ok" : "failed", minimize_hit ? "ok" : "failed",
-                            close_hit ? "ok" : "failed", edges ? "ok" : "failed",
+                            maximize_hit ? "ok" : "failed",
+                            minimize_client ? "ok" : "failed",
+                            close_client ? "ok" : "failed", edges ? "ok" : "failed",
                             fullscreen_client ? "client" : "failed",
                             maximized && restored ? "ok" : "failed",
                             counters ? "stable" : "changed");

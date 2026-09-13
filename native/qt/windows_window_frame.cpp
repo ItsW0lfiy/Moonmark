@@ -10,8 +10,11 @@
 
 #ifdef _WIN32
 #define NOMINMAX
+#include <dwmapi.h>
 #include <windows.h>
 #include <windowsx.h>
+
+#pragma comment(lib, "dwmapi.lib")
 #endif
 
 namespace moonmark::qt::windows {
@@ -131,9 +134,11 @@ HitRole hitTest(QWidget* window, QWidget* title_bar, CaptionButton* minimize,
                 CaptionButton* maximize, CaptionButton* close,
                 const QPoint& client_point, bool fullscreen) {
     if (window == nullptr || fullscreen) return HitRole::Client;
-    if (contains(window, minimize, client_point)) return HitRole::Minimize;
+    // Minimize and close remain ordinary Qt client controls. Only maximize must
+    // expose a native caption role for the Windows 11 Snap Layout contract.
+    if (contains(window, minimize, client_point)) return HitRole::Client;
     if (contains(window, maximize, client_point)) return HitRole::Maximize;
-    if (contains(window, close, client_point)) return HitRole::Close;
+    if (contains(window, close, client_point)) return HitRole::Client;
     constexpr int border = 6;
     const bool left = client_point.x() < border;
     const bool right = client_point.x() >= window->width() - border;
@@ -162,6 +167,13 @@ bool handleNativeFrameEvent(QWidget* window, QWidget* title_bar,
     if (window == nullptr || message == nullptr || result == nullptr) return false;
     auto* native = static_cast<MSG*>(message);
     const auto handle = native->hwnd;
+    LRESULT dwm_result = 0;
+    bool dwm_handled = false;
+    if (native->message == WM_NCHITTEST || native->message == WM_NCMOUSEMOVE ||
+        native->message == WM_NCMOUSELEAVE) {
+        dwm_handled = DwmDefWindowProc(
+            handle, native->message, native->wParam, native->lParam, &dwm_result);
+    }
     switch (native->message) {
     case WM_NCCALCSIZE:
         return false;
@@ -188,19 +200,43 @@ bool handleNativeFrameEvent(QWidget* window, QWidget* title_bar,
         TRACKMOUSEEVENT tracking{sizeof(TRACKMOUSEEVENT), TME_LEAVE | TME_NONCLIENT,
                                  handle, 0};
         TrackMouseEvent(&tracking);
+        if (dwm_handled) {
+            *result = dwm_result;
+            return true;
+        }
         return false;
     }
     case WM_NCMOUSELEAVE:
         updateCaptionInteraction(minimize, maximize, close, HitRole::Client);
+        if (dwm_handled) {
+            *result = dwm_result;
+            return true;
+        }
         return false;
     case WM_NCLBUTTONDOWN: {
         const auto role = roleForNativeCode(native->wParam);
+        if (role != HitRole::Maximize || maximize == nullptr) return false;
+        maximize->setDown(true);
         updateCaptionInteraction(minimize, maximize, close, role, role);
-        return false;
+        *result = 0;
+        return true;
     }
-    case WM_NCLBUTTONUP:
+    case WM_NCLBUTTONUP: {
+        if (maximize == nullptr || !maximize->isDown()) return false;
+        const bool activate = native->wParam == HTMAXBUTTON;
+        maximize->setDown(false);
         updateCaptionInteraction(minimize, maximize, close,
-                                 roleForNativeCode(native->wParam));
+                                 activate ? HitRole::Maximize : HitRole::Client);
+        if (activate) maximize->click();
+        *result = 0;
+        return true;
+    }
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        if (maximize != nullptr && maximize->isDown()) {
+            maximize->setDown(false);
+            updateCaptionInteraction(minimize, maximize, close, HitRole::Client);
+        }
         return false;
     case WM_NCRBUTTONUP:
         if (native->wParam == HTCAPTION) {

@@ -83,6 +83,8 @@ fn native_window_exposes_windows_caption_and_resize_semantics() {
     assert!(output.contains("thick_frame=yes"), "{output}");
     assert!(output.contains("caption_hit=ok"), "{output}");
     assert!(output.contains("max_hit=ok"), "{output}");
+    assert!(output.contains("min_client=ok"), "{output}");
+    assert!(output.contains("close_client=ok"), "{output}");
     assert!(output.contains("resize_hits=ok"), "{output}");
     assert!(output.contains("buttons=ok"), "{output}");
     assert!(output.contains("counters=stable"), "{output}");
