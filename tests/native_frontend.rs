@@ -89,6 +89,15 @@ fn native_window_exposes_windows_caption_and_resize_semantics() {
 }
 
 #[test]
+fn middle_autoscroll_indicator_tracks_its_full_lifecycle() {
+    let output = run_smoke("--smoke-autoscroll-anchor", "layout-transitions.md");
+    assert!(output.contains("autoscroll_anchor=ok"), "{output}");
+    assert!(output.contains("lifecycle=ok"), "{output}");
+    assert!(output.contains("cursor=neutral"), "{output}");
+    assert!(output.contains("counters=stable"), "{output}");
+}
+
+#[test]
 fn qt_frontend_smoke_matrix() {
     let output = run_smoke("--smoke-image-geometry", "image-layout-regression.md");
     assert!(output.contains("images=ok"), "{output}");
