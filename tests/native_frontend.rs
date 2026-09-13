@@ -96,6 +96,7 @@ fn middle_autoscroll_indicator_tracks_its_full_lifecycle() {
     assert!(output.contains("autoscroll_anchor=ok"), "{output}");
     assert!(output.contains("lifecycle=ok"), "{output}");
     assert!(output.contains("cursor=neutral"), "{output}");
+    assert!(output.contains("pinned=ok"), "{output}");
     assert!(output.contains("counters=stable"), "{output}");
 }
 

@@ -285,46 +285,6 @@ private:
     QString full_text_;
 };
 
-class AutoscrollAnchorIndicator final : public QWidget {
-public:
-    explicit AutoscrollAnchorIndicator(QWidget* parent) : QWidget(parent) {
-        setAttribute(Qt::WA_TransparentForMouseEvents);
-        setFocusPolicy(Qt::NoFocus);
-        setFixedSize(30, 30);
-        hide();
-    }
-
-    void setAnchor(const QPointF& point) {
-        move(qRound(point.x() - width() / 2.0), qRound(point.y() - height() / 2.0));
-    }
-
-protected:
-    void paintEvent(QPaintEvent*) override {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing);
-        const QRectF outer = QRectF(rect()).adjusted(1.5, 1.5, -1.5, -1.5);
-        painter.setPen(QPen(QColor(colour::border_strong), 1.2));
-        painter.setBrush(QColor(colour::raised));
-        painter.drawEllipse(outer);
-
-        QPen glyph(QColor(colour::silver), 1.6, Qt::SolidLine, Qt::RoundCap,
-                   Qt::RoundJoin);
-        painter.setPen(glyph);
-        painter.setBrush(Qt::NoBrush);
-        QPainterPath arrows;
-        arrows.moveTo(10.5, 10.5);
-        arrows.lineTo(15.0, 6.5);
-        arrows.lineTo(19.5, 10.5);
-        arrows.moveTo(10.5, 19.5);
-        arrows.lineTo(15.0, 23.5);
-        arrows.lineTo(19.5, 19.5);
-        painter.drawPath(arrows);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor(colour::bright));
-        painter.drawEllipse(QPointF(15.0, 15.0), 2.0, 2.0);
-    }
-};
-
 class ScrollFrameTrace final {
 public:
     ScrollFrameTrace() : enabled_(qEnvironmentVariableIsSet("MOONMARK_SCROLL_TRACE")) {
@@ -524,7 +484,6 @@ public:
 
         autoscroll_.setInterval(16);
         QObject::connect(&autoscroll_, &QTimer::timeout, this, [this] { autoScrollTick(); });
-        autoscroll_indicator_ = new AutoscrollAnchorIndicator(viewport());
     }
 
     void load(const QJsonObject& root) {
@@ -747,14 +706,18 @@ public:
             QApplication::sendEvent(viewport(), &event);
         };
         middle_click();
-        const QRect anchored_geometry = autoscroll_indicator_->geometry();
-        const QPoint visual_center = anchored_geometry.topLeft() +
-            QPoint(autoscroll_indicator_->width() / 2,
-                   autoscroll_indicator_->height() / 2);
+        const QRectF anchored_geometry = autoscrollIndicatorRect();
+        const QPointF visual_center = anchored_geometry.center();
         const bool activated = autoscroll_active_ && autoscroll_.isActive() &&
-            autoscroll_indicator_->isVisible() &&
             visual_center == anchor &&
             viewport()->cursor().shape() != Qt::SizeVerCursor;
+        const int previous_scroll = verticalScrollBar()->value();
+        verticalScrollBar()->setValue(std::min(verticalScrollBar()->maximum(),
+                                               previous_scroll + 80));
+        QApplication::processEvents();
+        const bool document_scrolled = verticalScrollBar()->maximum() == 0 ||
+            verticalScrollBar()->value() != previous_scroll;
+        const bool pinned_during_scroll = autoscrollIndicatorRect() == anchored_geometry;
         const auto snapshot_path = qEnvironmentVariable("MOONMARK_AUTOSCROLL_SNAPSHOT");
         if (!snapshot_path.isEmpty()) viewport()->grab().save(snapshot_path);
 
@@ -762,16 +725,16 @@ public:
                              viewport()->mapToGlobal(anchor + QPoint(0, 80)),
                              Qt::NoButton, Qt::NoButton, Qt::NoModifier);
         QApplication::sendEvent(viewport(), &movement);
-        const bool stationary = autoscroll_indicator_->geometry() == anchored_geometry;
+        const bool stationary = autoscrollIndicatorRect() == anchored_geometry;
         QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
         QApplication::sendEvent(this, &escape);
         const bool escape_cancelled = !autoscroll_active_ && !autoscroll_.isActive() &&
-            !autoscroll_indicator_->isVisible();
+            autoscrollIndicatorRect().isEmpty();
 
         middle_click();
         middle_click();
         const bool second_middle_cancelled = !autoscroll_active_ &&
-            !autoscroll_indicator_->isVisible();
+            autoscrollIndicatorRect().isEmpty();
 
         middle_click();
         QMouseEvent left_click(QEvent::MouseButtonPress, anchor,
@@ -779,17 +742,18 @@ public:
                                Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(viewport(), &left_click);
         const bool left_cancelled = !autoscroll_active_ &&
-            !autoscroll_indicator_->isVisible();
+            autoscrollIndicatorRect().isEmpty();
         std::fprintf(stdout,
-            "AUTOSCROLL_DETAIL activated=%s stationary=%s escape=%s second_middle=%s "
-            "left_click=%s center=%d,%d expected=%d,%d\n",
+            "AUTOSCROLL_DETAIL activated=%s stationary=%s scrolled=%s pinned=%s "
+            "escape=%s second_middle=%s left_click=%s center=%.0f,%.0f expected=%d,%d\n",
             activated ? "ok" : "failed", stationary ? "ok" : "failed",
+            document_scrolled ? "ok" : "failed", pinned_during_scroll ? "ok" : "failed",
             escape_cancelled ? "ok" : "failed",
             second_middle_cancelled ? "ok" : "failed",
             left_cancelled ? "ok" : "failed", visual_center.x(), visual_center.y(),
             anchor.x(), anchor.y());
-        return activated && stationary && escape_cancelled && second_middle_cancelled &&
-            left_cancelled;
+        return activated && stationary && document_scrolled && pinned_during_scroll &&
+            escape_cancelled && second_middle_cancelled && left_cancelled;
     }
 
     [[nodiscard]] bool testDocumentStyle() const {
@@ -1088,6 +1052,7 @@ protected:
                 painter.drawLine(x, first.top() - 3, x, bottom);
             }
         }
+        paintAutoscrollAnchor(painter);
         scroll_trace_.recordPaint(paint_started_us, paint_cost.nsecsElapsed() / 1000);
     }
 
@@ -1197,9 +1162,7 @@ protected:
             autoscroll_pointer_ = event->position();
             if (autoscroll_active_) {
                 viewport()->unsetCursor();
-                autoscroll_indicator_->setAnchor(autoscroll_anchor_);
-                autoscroll_indicator_->show();
-                autoscroll_indicator_->raise();
+                viewport()->update(autoscrollIndicatorRect().toAlignedRect());
                 autoscroll_.start();
             } else {
                 stopAutoscroll();
@@ -2146,10 +2109,46 @@ private:
     }
 
     void stopAutoscroll() {
+        const QRect dirty = autoscrollIndicatorRect().toAlignedRect();
         autoscroll_active_ = false;
         autoscroll_.stop();
-        if (autoscroll_indicator_ != nullptr) autoscroll_indicator_->hide();
+        if (!dirty.isEmpty()) viewport()->update(dirty);
         viewport()->unsetCursor();
+    }
+
+    [[nodiscard]] QRectF autoscrollIndicatorRect() const {
+        if (!autoscroll_active_) return {};
+        constexpr qreal diameter = 30.0;
+        return {autoscroll_anchor_.x() - diameter / 2.0,
+                autoscroll_anchor_.y() - diameter / 2.0, diameter, diameter};
+    }
+
+    void paintAutoscrollAnchor(QPainter& painter) const {
+        const QRectF indicator = autoscrollIndicatorRect();
+        if (indicator.isEmpty()) return;
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing);
+        const QRectF outer = indicator.adjusted(1.5, 1.5, -1.5, -1.5);
+        painter.setPen(QPen(QColor(colour::border_strong), 1.2));
+        painter.setBrush(QColor(colour::raised));
+        painter.drawEllipse(outer);
+
+        const QPointF center = indicator.center();
+        painter.setPen(QPen(QColor(colour::silver), 1.6, Qt::SolidLine,
+                            Qt::RoundCap, Qt::RoundJoin));
+        painter.setBrush(Qt::NoBrush);
+        QPainterPath arrows;
+        arrows.moveTo(center + QPointF(-4.5, -4.5));
+        arrows.lineTo(center + QPointF(0.0, -8.5));
+        arrows.lineTo(center + QPointF(4.5, -4.5));
+        arrows.moveTo(center + QPointF(-4.5, 4.5));
+        arrows.lineTo(center + QPointF(0.0, 8.5));
+        arrows.lineTo(center + QPointF(4.5, 4.5));
+        painter.drawPath(arrows);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(colour::bright));
+        painter.drawEllipse(center, 2.0, 2.0);
+        painter.restore();
     }
 
     void autoScrollTick() {
@@ -2203,7 +2202,6 @@ private:
     QTimer image_poll_;
     QTimer image_prefetch_;
     QTimer autoscroll_;
-    AutoscrollAnchorIndicator* autoscroll_indicator_ = nullptr;
     double wheel_fraction_ = 0.0;
     bool autoscroll_active_ = false;
     QPointF autoscroll_anchor_;
