@@ -98,6 +98,7 @@ Moonmark's renderer is the foundation of the application. Other features should 
 Planned renderer work includes:
 
 - continuously improve CommonMark and GFM rendering fidelity
+- support selectable Markdown compatibility profiles without creating separate renderer implementations
 - maintain strong heading hierarchy and document structure
 - improve nested lists and task-list presentation
 - improve blockquote presentation
@@ -125,6 +126,44 @@ Planned renderer work includes:
 - keep raw HTML inert or deliberately constrained unless a future design explicitly changes that policy
 
 Moonmark should prefer a smaller number of well-integrated renderer features over a large collection of fragile rendering hacks.
+
+---
+
+# Markdown compatibility profiles
+
+Moonmark should be able to interpret ordinary Markdown according to selectable compatibility profiles while continuing to use one parser/semantic-model/renderer architecture.
+
+The goal is not to emulate every Markdown application perfectly. The goal is to let users choose how broadly Moonmark interprets Markdown syntax and to combine useful extensions without forcing the document into a proprietary format.
+
+Planned profile direction includes:
+
+- **CommonMark** — conservative standards-oriented Markdown behavior
+- **GitHub Flavored Markdown** — CommonMark plus the supported GFM feature set such as tables, task lists, strikethrough, and autolinks
+- **Moonmark** — Moonmark's curated default feature set, combining broadly useful supported syntax while remaining predictable and portable
+- **Extended** — opt into additional Moonmark-supported Markdown-adjacent syntax as those features are implemented
+- **Custom** — advanced per-feature controls for users who want to decide exactly which syntax extensions are enabled
+
+Profile selection should configure parser behavior rather than switch to unrelated rendering engines. Where the parser already exposes individual extension options, profiles should be built from those options instead of duplicating parser logic.
+
+Potential custom controls may include:
+
+- tables
+- task lists
+- strikethrough
+- autolinks
+- footnotes
+- frontmatter
+- future highlight syntax
+- future Wiki-style links
+- future callouts/admonitions
+- future math syntax
+- other deliberately adopted Markdown extensions
+
+Compatibility and appearance must remain separate concepts. A Markdown profile decides **what syntax means**; themes and document appearance decide **how the resulting document looks**. Users should be able to combine any supported compatibility profile with any supported Moonmark visual theme or presentation configuration.
+
+Application-specific syntaxes such as Wiki links, callouts, embeds, highlight syntax, or math should only enter a compatibility profile after Moonmark deliberately implements and validates them. A profile must not imply compatibility that the parser and renderer do not actually provide.
+
+The normal settings UI should keep this simple: expose a compact profile selector, with detailed extension switches hidden behind **Custom** or another advanced surface. This keeps compatibility powerful without turning the default settings page into a wall of Markdown feature toggles.
 
 ---
 
@@ -324,6 +363,17 @@ Heavy customization is a planned first-class Moonmark capability.
 The default configuration should remain intentionally simple, but users should be able to decide how much interface they want to see.
 
 Planned settings include:
+
+## Markdown compatibility
+
+- compact compatibility-profile selector
+- CommonMark profile
+- GitHub Flavored Markdown profile
+- Moonmark curated profile
+- Extended profile as Moonmark adopts additional syntax
+- Custom profile with advanced per-extension controls
+- keep parser compatibility independent from visual themes and document appearance
+- make compatibility changes predictable and clearly scoped to syntax interpretation
 
 ## Document appearance
 
@@ -662,6 +712,8 @@ These should be decided when implementation is close enough to justify locking t
 - single-instance versus multi-instance policy
 - exact integrated editor widget/engine and buffer architecture
 - exact live-preview strategy
+- exact Markdown compatibility-profile definitions and persistence behavior
+- exact strategy for Moonmark-specific syntax that is not directly supported by Comrak
 - exact math/diagram renderer strategy
 - exact folder/search indexing strategy
 - exact annotation persistence format
