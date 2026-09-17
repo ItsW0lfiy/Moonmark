@@ -140,7 +140,11 @@ mod tests {
         fs::write(images.join("moon ü.png"), b"x").unwrap();
         let document = root.join("document.md");
         fs::write(&document, b"").unwrap();
-        for reference in ["images/moon%20%C3%BC.png", "images\\moon ü.png"] {
+        for reference in [
+            "images/moon ü.png",
+            "images/moon%20%C3%BC.png",
+            "images\\moon ü.png",
+        ] {
             assert_eq!(
                 resolve_local_image(&document, reference).state,
                 AssetState::Allowed

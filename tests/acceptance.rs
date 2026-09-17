@@ -1,3 +1,4 @@
+use moonmark::markdown::convert::{kind, style};
 use moonmark::markdown::{Block, Inline, parse, to_presentation};
 use moonmark::presentation::PresentationMetrics;
 use moonmark::settings::Settings;
@@ -101,5 +102,110 @@ fn presentation_heading_targets_match_unique_toc_anchors() {
             .map(|command| command.target.as_str())
             .collect::<Vec<_>>(),
         ["repeat", "repeat-1"]
+    );
+}
+
+#[test]
+fn practical_markdown_profile_reaches_the_presentation_model() {
+    let fixture = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures")
+            .join("markdown-compatibility.md"),
+    )
+    .expect("read compatibility fixture");
+    let model = parse(&fixture);
+    let (presentation, images) = to_presentation(
+        &model,
+        std::path::Path::new("C:/Moonmark/markdown-compatibility.md"),
+        PresentationMetrics::default(),
+        &Settings::default(),
+    );
+
+    assert!(images.is_empty());
+    for expected_kind in [
+        kind::BEGIN_HEADING,
+        kind::BEGIN_QUOTE,
+        kind::BEGIN_LIST,
+        kind::CODE_BLOCK,
+        kind::BEGIN_TABLE,
+        kind::HORIZONTAL_RULE,
+        kind::RAW_HTML,
+    ] {
+        assert!(
+            presentation
+                .commands
+                .iter()
+                .any(|command| command.kind == expected_kind),
+            "missing presentation command kind {expected_kind}"
+        );
+    }
+    for expected_style in [
+        style::EMPHASIS,
+        style::STRONG,
+        style::STRIKE,
+        style::CODE,
+        style::LINK,
+        style::CHECKED,
+        style::UNCHECKED,
+    ] {
+        assert!(
+            presentation
+                .commands
+                .iter()
+                .any(|command| command.flags & expected_style != 0),
+            "missing presentation style {expected_style}"
+        );
+    }
+    let item_flags = presentation
+        .commands
+        .iter()
+        .filter(|command| command.kind == kind::BEGIN_ITEM)
+        .map(|command| command.flags)
+        .collect::<Vec<_>>();
+    assert!(item_flags.contains(&0), "ordinary list item became a task");
+    assert!(item_flags.contains(&style::UNCHECKED));
+    assert!(item_flags.contains(&style::CHECKED));
+    let destinations = presentation
+        .commands
+        .iter()
+        .filter(|command| command.flags & style::LINK != 0)
+        .map(|command| command.target.as_str())
+        .collect::<Vec<_>>();
+    for expected in [
+        "https://example.com/autolink",
+        "https://example.com/",
+        "https://example.com/reference",
+        "https://example.com/collapsed",
+        "https://example.com/shortcut",
+    ] {
+        assert!(destinations.contains(&expected), "missing link {expected}");
+    }
+    assert!(
+        presentation
+            .commands
+            .iter()
+            .any(|command| { command.kind == kind::CODE_BLOCK && command.extra == "rust" })
+    );
+    for nested_text in ["nested emphasis", "nested strength"] {
+        assert!(presentation.commands.iter().any(|command| {
+            command.kind == kind::TEXT
+                && command.text == nested_text
+                && command.flags & style::EMPHASIS != 0
+                && command.flags & style::STRONG != 0
+        }));
+    }
+    assert!(
+        presentation.commands.iter().any(|command| {
+            command.kind == kind::TEXT && command.text.contains("[compatibility]")
+        })
+    );
+    assert_eq!(
+        presentation
+            .toc
+            .iter()
+            .filter(|entry| entry.title == "Repeated heading")
+            .map(|entry| entry.anchor.as_str())
+            .collect::<Vec<_>>(),
+        ["repeated-heading", "repeated-heading-1"]
     );
 }

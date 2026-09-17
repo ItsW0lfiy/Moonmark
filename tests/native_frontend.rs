@@ -101,6 +101,23 @@ fn middle_autoscroll_indicator_tracks_its_full_lifecycle() {
 }
 
 #[test]
+fn literal_space_image_destinations_render_through_the_native_pipeline() {
+    let output = run_smoke("--smoke-images", "literal-space-destinations.md");
+    assert!(output.contains("images=ok"), "{output}");
+    assert!(output.contains("discovered=4"), "{output}");
+    assert!(output.contains("loaded=4"), "{output}");
+    assert!(output.contains("failed=0"), "{output}");
+    assert!(output.contains("requests=1"), "{output}");
+}
+
+#[test]
+fn practical_markdown_profile_renders_through_the_native_document() {
+    let output = run_smoke("--smoke-render", "markdown-compatibility.md");
+    assert!(output.contains("render=ok"), "{output}");
+    assert!(output.contains("selection_copy=ok"), "{output}");
+}
+
+#[test]
 fn qt_frontend_smoke_matrix() {
     let output = run_smoke("--smoke-image-geometry", "image-layout-regression.md");
     assert!(output.contains("images=ok"), "{output}");

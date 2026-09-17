@@ -449,4 +449,55 @@ mod tests {
         assert_eq!(requests.len(), 1);
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn literal_encoded_and_bracketed_space_paths_share_the_local_asset() {
+        let root = std::env::temp_dir().join(format!(
+            "moonmark-literal-space-image-{}",
+            std::process::id()
+        ));
+        let images = root.join("images");
+        std::fs::create_dir_all(&images).expect("create image directory");
+        let document_path = root.join("document.md");
+        let image_path = images.join("image with spaces.png");
+        std::fs::write(&document_path, b"").expect("write document");
+        std::fs::write(&image_path, b"fixture").expect("write image fixture");
+
+        let model = parse(
+            "![literal](images/image with spaces.png)\n\n\
+             ![encoded](images/image%20with%20spaces.png)\n\n\
+             ![bracketed](<images/image with spaces.png>)\n\n\
+             ![titled](images/image with spaces.png \"Example\")\n\n\
+             [Document](Some Folder/Document Name.md)",
+        );
+        let (presentation, requests) = to_presentation(
+            &model,
+            &document_path,
+            PresentationMetrics::default(),
+            &Settings::default(),
+        );
+        let image_commands = presentation
+            .commands
+            .iter()
+            .filter(|command| command.kind == kind::IMAGE)
+            .collect::<Vec<_>>();
+        assert_eq!(image_commands.len(), 4);
+        assert!(image_commands.iter().all(|command| command.flags == 0));
+        assert!(
+            image_commands
+                .iter()
+                .all(|command| command.number == image_commands[0].number)
+        );
+        assert_eq!(requests.len(), 1);
+        assert_eq!(image_commands[3].extra, "Example");
+        assert_eq!(
+            std::path::Path::new(&requests[0].path),
+            std::fs::canonicalize(&image_path).unwrap()
+        );
+        assert!(presentation.commands.iter().any(|command| {
+            command.flags & style::LINK != 0 && command.target == "Some Folder/Document Name.md"
+        }));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
