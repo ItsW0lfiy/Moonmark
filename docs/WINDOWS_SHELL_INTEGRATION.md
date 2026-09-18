@@ -13,9 +13,9 @@ Moonmark.exe "A.md" "B.markdown" "notes.txt"
 
 Arguments beginning with `-` are treated as switches, not file names. Missing and unsupported file arguments are not opened; interactive startup reports them together in a warning. Empty startup remains valid. Drag/drop and the Open dialog use the same supported document set.
 
-## Installer registration contract
+## Installer registration
 
-The future approved installer should register the installed executable, never a build-tree path. The open command must preserve quoting:
+The Inno installer registers the installed executable, never a build-tree path. The open command preserves quoting:
 
 ```text
 "{app}\Moonmark.exe" "%1"
@@ -27,7 +27,7 @@ Registration should make Moonmark a capable Open With application for:
 - `.markdown`
 - `.txt`
 
-The intended conventional registration model is:
+The implemented conventional registration model is:
 
 - an application registration under `RegisteredApplications`;
 - Moonmark capabilities with `FileAssociations` entries;
@@ -36,6 +36,6 @@ The intended conventional registration model is:
 - uninstall flags that remove only Moonmark-owned registration;
 - an Explorer association-change notification after install/uninstall.
 
-The installer must not overwrite Windows `UserChoice` or silently claim the current default. On modern Windows, the user remains authoritative through Open With / Default Apps. Portable archives perform no registration.
+The `fileassoc` installer task is offered and checked once; the user may opt out. It registers availability but does not overwrite Windows `UserChoice` or silently claim the current default. On modern Windows, the user remains authoritative through Open With / Default Apps. Portable archives perform no registration.
 
 Dev.7 deliberately retains a multiple-process policy: an Explorer invocation may create a new Moonmark process. No single-instance mutex, named pipe, or shell-routing IPC is part of this milestone.

@@ -51,9 +51,10 @@ cargo run --bin generate_text_fixture
 cargo run --release --bin renderer_benchmark -- fixtures\generated\image-stress.md
 ```
 
-Assemble the measured Windows portable folder and ZIP with:
+Assemble the measured Windows setup executable, portable ZIP, and checksums with:
 
 ```powershell
+pwsh -File scripts/bootstrap_inno.ps1
 pwsh -File scripts/package_windows.ps1
 ```
 

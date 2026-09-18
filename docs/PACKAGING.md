@@ -10,10 +10,17 @@ It reads the version from Cargo metadata, builds Release, stages an ignored `dep
 
 The current engine-independent artifacts are:
 
+- `Moonmark-Setup-win-x64.exe`
 - `Moonmark-portable-win-x64.zip`
 - `SHA256SUMS.txt`
 
-After an installer engine is explicitly approved, the same script can accept its completed artifact through `-InstallerPath`; it stages that file as `Moonmark-Setup-win-x64.exe` and regenerates checksums over both artifacts. The script does not build or assume an installer engine itself.
+Inno Setup 7.1.0 is the approved dev.7 installer engine. Prepare the verified project-local compiler when no compatible compiler is installed:
+
+```powershell
+pwsh -File scripts/bootstrap_inno.ps1
+```
+
+The bootstrap downloads the official signed Inno installer into ignored `target/tools`, verifies its pinned SHA-256 and Authenticode signer, and uses the vendor's portable extraction mode. It does not install Inno globally. Packaging discovers that compiler automatically; `-InnoCompiler` or `MOONMARK_INNO_ISCC` may select another compiler explicitly. Use `-SkipInstaller` only for a deliberate portable-only build.
 
 The portable folder contains:
 
@@ -27,10 +34,27 @@ The portable folder contains:
 
 This ZIP is the current practical portable architecture. It needs no .NET, JVM, Node.js, browser engine, or separately installed Qt. It uses normal Windows system libraries; including app-local MSVC CRT DLLs avoids asking users to install the Visual C++ Redistributable separately.
 
-The Qt SDK, Rust toolchain, Cargo, MSVC compiler, Windows SDK, and `vswhere.exe` are build-time requirements only. `vswhere` locates installed C++ toolchains and the newest app-local x64 VC runtime instead of relying on a hardcoded Visual Studio edition path. Missing Qt, platform-plugin, or CRT files fail packaging instead of silently producing a client-dependent archive. Normal users receive the executable, exact Qt DLLs/plugins, app-local CRT, assets, notices, and license texts. The portable edition runs directly from its extracted directory; the future installer will install essentially the same payload rather than bootstrap a development SDK or language runtime.
+The Qt SDK, Rust toolchain, Cargo, MSVC compiler, Windows SDK, `vswhere.exe`, and Inno compiler are build-time requirements only. `vswhere` locates installed C++ toolchains and the newest app-local x64 VC runtime instead of relying on a hardcoded Visual Studio edition path. Missing Qt, platform-plugin, CRT, or installer compiler files fail packaging instead of silently producing a client-dependent artifact. Normal users receive the executable, exact Qt DLLs/plugins, app-local CRT, assets, notices, and license texts. The portable edition runs directly from its extracted directory; the installer deploys the same staged payload rather than bootstrap a development SDK or language runtime.
 
-An installer should deploy the same staged payload, then add approved shortcuts, uninstall metadata, and file associations. Installer technology still requires explicit approval, so the current dev.7 bundle intentionally has no setup executable yet.
+The setup defaults to `{autopf}\Moonmark` (normally 64-bit Program Files), creates an Installed Apps/uninstall entry and Start Menu shortcut, offers an optional Desktop shortcut, and offers Moonmark's Open With registration for `.md`, `.markdown`, and `.txt`. It does not write the protected Windows `UserChoice` default. A stable AppId keeps upgrades in one Installed Apps entry. Uninstall removes Moonmark-owned files, shortcuts, and registration but not user documents or future user settings.
+
+For unattended deployment and later WinGet validation:
+
+```powershell
+Moonmark-Setup-win-x64.exe /SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+"%ProgramFiles%\Moonmark\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```
+
+Use `/TASKS="fileassoc,desktopicon"` to select both optional tasks explicitly. The installer normally requests administrative elevation because its default target is Program Files. The unsigned development installer may trigger Windows reputation warnings.
+
+The contained lifecycle test uses Inno's command-line privilege override to install under project-local `target/installer-tests`, while exercising the same payload, AppId, shortcuts, and HKCU-equivalent shell registration:
+
+```powershell
+pwsh -File scripts/test_windows_installer.ps1
+```
+
+It refuses to overwrite an existing current-user Moonmark installation or shortcut, generates and cleans its own spaced/Unicode test documents, verifies an older local build upgrades to the current version without duplicate Installed Apps entries, launches the installed app, then silently uninstalls and checks cleanup. It does not replace final physical testing of the elevated Program Files path or Windows Explorer UI.
 
 A true single executable requires a separate static Qt build and a deliberate Qt licensing decision. It was not built. Under LGPLv3, static distribution adds relinking/application-object and installation-information obligations and may affect whether the application remains merely a work using the library. Dynamic Qt is the safer current packaging choice; legal review and Moonmark's own license decision remain required before public distribution.
 
-The first dev.7 package measurement is 6,496,768 bytes for `Moonmark.exe`, 35,264,372 bytes (33.63 MiB) for the complete portable folder, and 15,625,972 bytes (14.90 MiB) for the ZIP. The remaining folder bytes are Qt, the Windows platform plugin, app-local MSVC CRT, branding, and legal/support files. The packaged smoke passed with only normal Windows system paths visible. This is not yet a clean-VM or minimum-Windows-version certification; installer install/upgrade/uninstall validation remains gated on the installer choice.
+The dev.7 package measurement is 6,496,768 bytes for `Moonmark.exe`, 35,264,372 bytes (33.63 MiB) for the complete portable folder, about 14.90 MiB for the ZIP, and about 12.27 MiB for the Inno setup. Exact final sizes and SHA-256 values are written with each rebuild under `deploy/release/0.1.0-dev.7/`; do not copy stale hashes into documentation. The remaining folder bytes are Qt, the Windows platform plugin, app-local MSVC CRT, branding, and legal/support files. The packaged smoke passed with only normal Windows system paths visible. This is not yet a clean-VM or minimum-Windows-version certification.

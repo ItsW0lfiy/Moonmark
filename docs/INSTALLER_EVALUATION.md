@@ -1,6 +1,6 @@
-# Windows installer evaluation — dev.7
+# Windows installer decision — dev.7
 
-Moonmark does not yet have an approved installer engine. This evaluation records the dev.7 decision gate; it does not authorize or add an installer dependency.
+Inno Setup was explicitly approved for Moonmark dev.7 after the following comparison. Moonmark uses Inno Setup 7.1.0 to compile a conventional offline setup executable from the same staged payload used by the portable ZIP. Inno is a build-time tool only; users do not install an Inno runtime.
 
 ## Shortlist
 
@@ -11,20 +11,15 @@ Moonmark does not yet have an approved installer engine. This evaluation records
 | **WiX Toolset** | Native `.msi`/bundle output and strong enterprise unattended behavior | Excellent Windows Installer upgrade/uninstall semantics and component ownership | Current WiX is normally built as a .NET tool/MSBuild SDK and requires a .NET SDK. Current documentation also describes an Open Source Maintenance Fee for revenue-generating use. | Not recommended under Moonmark's current runtime/no-required-paid-component policy without another explicit decision. |
 | **MSIX** | Native `.msix`; deployment is largely Windows-managed | Strong clean install/update/uninstall and declarative file associations | Windows tooling; every directly deployed package must be signed and the certificate trusted on the client | Poor fit for an unsigned first GitHub prerelease. It also introduces package identity/container and signing decisions beyond this milestone. |
 
-## Recommendation and approval gate
+## Decision
 
-Use **Inno Setup** for the first Moonmark installer, subject to explicit user approval. It produces the expected offline setup EXE, can install the already validated portable payload under Program Files, can register Moonmark without taking defaults, supports optional Desktop/file-association tasks, has normal uninstall/upgrade behavior, and has unattended switches suitable for later WinGet validation.
+Moonmark uses **Inno Setup** for its first Windows installer. It produces the expected offline setup EXE, installs the validated portable payload under Program Files, registers Moonmark without changing protected Windows defaults, supports optional Desktop/file-association tasks, and has normal uninstall/upgrade and unattended behavior suitable for later WinGet validation.
 
-Approval would authorize adding an `.iss` source file and invoking the Inno compiler from the existing PowerShell release workflow. It would not authorize dev.8 update logic, code signing claims, single-instance IPC, or changing the application architecture.
+The implementation is [Moonmark.iss](../packaging/windows/Moonmark.iss), invoked by `scripts/package_windows.ps1`. `scripts/bootstrap_inno.ps1` can download the official signed 7.1.0 compiler into ignored project-local `target/tools`; it checks the pinned SHA-256 and Authenticode signer before extracting the portable compiler. A compatible explicitly supplied compiler remains supported through `-InnoCompiler` or `MOONMARK_INNO_ISCC`.
 
-Until approval, dev.7 can produce and validate only:
+The decision does not authorize dev.8 update logic, code-signing claims, single-instance IPC, or an application-architecture change. Moonmark's setup executable remains unsigned for this development prerelease.
 
-- `Moonmark-portable-win-x64.zip`
-- `SHA256SUMS.txt`
-- the exact installer input/staging directory
-- installer-independent Windows executable metadata and shell argument handling
-
-Install/upgrade/uninstall and real Explorer Open With registration remain blocked on this one decision.
+Local lifecycle validation covers clean current-user installation of the same payload, an older local dev.7 build upgraded in place through the stable AppId, same-version reinstall, installed launch, shell registration, shortcuts, silent uninstall, registration cleanup, and preservation of user documents. A physical elevated Program Files install and the Explorer/Installed Apps visual surfaces remain manual Windows checks before publication.
 
 ## Sources checked
 

@@ -46,7 +46,7 @@ Turn the native development checkout into reproducible Windows release artifacts
 Planned work includes:
 
 - accept `.md`, `.markdown`, and `.txt` shell/command-line arguments with spaces and Unicode
-- select an installer engine through the explicit approval gate
+- use the explicitly approved Inno Setup installer engine
 - install under Program Files
 - register Moonmark in Installed Apps / uninstall
 - Start Menu shortcut

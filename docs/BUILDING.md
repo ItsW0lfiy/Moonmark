@@ -38,13 +38,14 @@ cargo build --release
 
 Moonmark development milestones use prerelease versions such as `0.1.0-dev.4` through `0.1.0-dev.7`. During milestone work, each coherent source, UI, test, or documentation change receives its own descriptive commit before unrelated work begins. Commits are not squashed merely to shorten history, and pushing still requires separate explicit user approval.
 
-The Windows x64 release bundle is assembled with:
+The Windows x64 release bundle is assembled with the approved Inno Setup compiler. If no compatible compiler is already available, prepare the verified project-local Inno 7.1.0 tool first:
 
 ```powershell
+pwsh -File scripts/bootstrap_inno.ps1
 pwsh -File scripts/package_windows.ps1
 ```
 
-See [PACKAGING.md](PACKAGING.md) for prerequisites, staging, app-local runtime policy, artifact paths, smoke validation, and checksums. The installer is intentionally absent until its engine is explicitly approved.
+See [PACKAGING.md](PACKAGING.md) for prerequisites, staging, app-local runtime policy, artifact paths, installer lifecycle validation, unattended switches, and checksums.
 
 ## Fixtures and benchmarks
 
