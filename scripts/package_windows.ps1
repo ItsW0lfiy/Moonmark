@@ -2,7 +2,8 @@
 param(
     [string]$QtRoot,
     [string]$OutputDirectory,
-    [string]$InstallerPath
+    [string]$InnoCompiler,
+    [switch]$SkipInstaller
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,37 @@ function Get-MoonmarkVersion {
     } | Select-Object -First 1
     if (-not $package) { throw 'Moonmark package metadata was not found.' }
     return $package.version
+}
+
+function Get-NumericVersion([string]$Version) {
+    if ($Version -notmatch '^(\d+)\.(\d+)\.(\d+)(?:-dev\.(\d+))?$') {
+        throw "Moonmark version '$Version' cannot be represented as a Windows installer version."
+    }
+    $revision = if ($Matches[4]) { $Matches[4] } else { '0' }
+    return "$($Matches[1]).$($Matches[2]).$($Matches[3]).$revision"
+}
+
+function Find-InnoCompiler {
+    $candidates = @()
+    if ($InnoCompiler) { $candidates += $InnoCompiler }
+    if ($env:MOONMARK_INNO_ISCC) { $candidates += $env:MOONMARK_INNO_ISCC }
+    $candidates += Get-ChildItem -LiteralPath (Join-Path $projectRoot 'target/tools') `
+        -Filter ISCC.exe -File -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName
+    $candidates += @(
+        'C:/Program Files/Inno Setup 7/ISCC.exe',
+        'C:/Program Files (x86)/Inno Setup 7/ISCC.exe',
+        'C:/Program Files/Inno Setup 6/ISCC.exe',
+        'C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
+    )
+    $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($command) { $candidates += $command.Source }
+    $selected = $candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+        Select-Object -First 1
+    if (-not $selected) {
+        throw 'Inno Setup compiler not found. Run: pwsh -File scripts/bootstrap_inno.ps1'
+    }
+    return [IO.Path]::GetFullPath($selected)
 }
 
 function Find-VcRedistDirectory {
@@ -65,6 +97,7 @@ function Find-VcRedistDirectory {
 Push-Location $projectRoot
 try {
     $version = Get-MoonmarkVersion
+    $numericVersion = Get-NumericVersion $version
     $packageRoot = [IO.Path]::GetFullPath((Join-Path $deployRoot "staging/$version/Moonmark"))
     if (-not $QtRoot) {
         $QtRoot = if ($env:MOONMARK_QT_DIR) { $env:MOONMARK_QT_DIR } else {
@@ -78,6 +111,7 @@ try {
     $OutputDirectory = Assert-UnderDeploy $OutputDirectory
     $packageRoot = Assert-UnderDeploy $packageRoot
     $zipPath = Join-Path $OutputDirectory 'Moonmark-portable-win-x64.zip'
+    $installerPath = Join-Path $OutputDirectory 'Moonmark-Setup-win-x64.exe'
     $checksumPath = Join-Path $OutputDirectory 'SHA256SUMS.txt'
 
     & cargo build --release
@@ -142,13 +176,22 @@ try {
     if (Test-Path -LiteralPath $zipPath) { Remove-Item -Force -LiteralPath $zipPath }
     Compress-Archive -Path $packageRoot -DestinationPath $zipPath -CompressionLevel Optimal
 
-    $artifacts = @($zipPath)
-    if ($InstallerPath) {
-        $resolvedInstaller = (Resolve-Path -LiteralPath $InstallerPath).Path
-        $stagedInstaller = Join-Path $OutputDirectory 'Moonmark-Setup-win-x64.exe'
-        Copy-Item -LiteralPath $resolvedInstaller -Destination $stagedInstaller -Force
-        $artifacts += $stagedInstaller
+    $artifacts = @()
+    if (-not $SkipInstaller) {
+        $compiler = Find-InnoCompiler
+        if (Test-Path -LiteralPath $installerPath) {
+            Remove-Item -Force -LiteralPath $installerPath
+        }
+        $installerScript = Join-Path $projectRoot 'packaging/windows/Moonmark.iss'
+        & $compiler '/Qp' "/DMyAppVersion=$version" "/DMyNumericVersion=$numericVersion" `
+            "/DSourceDir=$packageRoot" "/DOutputDir=$OutputDirectory" `
+            "/DProjectRoot=$projectRoot" $installerScript
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+            throw 'Moonmark installer compilation failed.'
+        }
+        $artifacts += $installerPath
     }
+    $artifacts += $zipPath
     $checksumLines = foreach ($artifact in $artifacts) {
         $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact).Hash.ToLowerInvariant()
         "$hash *$([IO.Path]::GetFileName($artifact))"
@@ -159,6 +202,10 @@ try {
     $zipBytes = (Get-Item -LiteralPath $zipPath).Length
     Write-Host ("Moonmark {0} portable folder: {1:N2} MiB at {2}" -f $version, ($folderBytes / 1MB), $packageRoot)
     Write-Host ("Portable ZIP: {0:N2} MiB at {1}" -f ($zipBytes / 1MB), $zipPath)
+    if (-not $SkipInstaller) {
+        $installerBytes = (Get-Item -LiteralPath $installerPath).Length
+        Write-Host ("Installer: {0:N2} MiB at {1}" -f ($installerBytes / 1MB), $installerPath)
+    }
     Write-Host "Checksums: $checksumPath"
 } finally {
     Pop-Location
