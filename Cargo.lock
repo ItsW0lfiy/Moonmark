@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "moonmark"
-version = "0.1.0-dev.6"
+version = "0.1.0-dev.7"
 dependencies = [
  "cc",
  "comrak",
