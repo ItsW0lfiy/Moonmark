@@ -16,7 +16,7 @@ Official features designed and maintained as part of Moonmark belong in **core M
 
 ---
 
-## Current milestone — `0.1.0-dev.6`
+## Completed foundation — `0.1.0-dev.6`
 
 The current development baseline includes:
 
@@ -39,13 +39,14 @@ This milestone is still an early foundation. The long-term roadmap is intentiona
 
 # Near-term release and distribution work
 
-## `0.1.0-dev.7` — Windows installer
+## Current milestone — `0.1.0-dev.7` — First Windows Release & Shell Integration
 
-Add a normal Windows installation path around the existing Moonmark package.
+Turn the native development checkout into reproducible Windows release artifacts and prepare the first GitHub development prerelease.
 
 Planned work includes:
 
-- select an installer engine separately
+- accept `.md`, `.markdown`, and `.txt` shell/command-line arguments with spaces and Unicode
+- select an installer engine through the explicit approval gate
 - install under Program Files
 - register Moonmark in Installed Apps / uninstall
 - Start Menu shortcut
@@ -56,6 +57,9 @@ Planned work includes:
 - include required native libraries, plugins, CRT files, assets, notices, and licenses
 - preserve the portable ZIP as a separate distribution
 - keep installed and portable builds on the same application architecture
+- produce deterministic artifact names and SHA-256 checksums
+- prepare conservative prerelease notes without publishing remotely
+- audit the Rust/core boundary for later Android document-provider work without selecting a mobile UI
 
 ## `0.1.0-dev.8` — GitHub Releases updater
 

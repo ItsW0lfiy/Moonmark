@@ -36,7 +36,15 @@ cargo build --release
 
 `build.rs` discovers Qt, compiles the C++20 adapter with warnings enabled, links Qt dynamically, embeds the Windows icon, and stages Qt DLLs/plugins/assets beside Cargo's executable. Build failure on either language fails Cargo.
 
-Moonmark development milestones use prerelease versions such as `0.1.0-dev.4`, `0.1.0-dev.5`, and `0.1.0-dev.6`. During milestone work, each coherent source, UI, test, or documentation change receives its own descriptive commit before unrelated work begins. Commits are not squashed merely to shorten history, and pushing still requires separate explicit user approval.
+Moonmark development milestones use prerelease versions such as `0.1.0-dev.4` through `0.1.0-dev.7`. During milestone work, each coherent source, UI, test, or documentation change receives its own descriptive commit before unrelated work begins. Commits are not squashed merely to shorten history, and pushing still requires separate explicit user approval.
+
+The Windows x64 release bundle is assembled with:
+
+```powershell
+pwsh -File scripts/package_windows.ps1
+```
+
+See [PACKAGING.md](PACKAGING.md) for prerequisites, staging, app-local runtime policy, artifact paths, smoke validation, and checksums. The installer is intentionally absent until its engine is explicitly approved.
 
 ## Fixtures and benchmarks
 
