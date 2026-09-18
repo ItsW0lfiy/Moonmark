@@ -34,6 +34,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -95,6 +96,13 @@ namespace colour = moonmark::style::colour;
 constexpr int quote_depth_property = QTextFormat::UserProperty + 1;
 constexpr int inline_code_property = QTextFormat::UserProperty + 2;
 constexpr int code_frame_property = QTextFormat::UserProperty + 3;
+
+bool isSupportedDocumentFile(const QFileInfo& file) {
+    if (!file.exists() || !file.isFile()) return false;
+    const auto suffix = file.suffix().toLower();
+    return suffix == QStringLiteral("md") || suffix == QStringLiteral("markdown") ||
+           suffix == QStringLiteral("txt");
+}
 
 namespace command_kind {
 constexpr int begin_paragraph = 1;
@@ -2255,7 +2263,7 @@ public:
 
     bool openDocument(const QString& path) {
         const QFileInfo file(path);
-        if (!file.exists()) {
+        if (!isSupportedDocumentFile(file)) {
             return false;
         }
         const auto canonical_path = file.canonicalFilePath();
@@ -2308,6 +2316,20 @@ public:
     }
 
     void runSmoke(const QString& mode) {
+        if (mode == QStringLiteral("startup-arguments")) {
+            QTimer::singleShot(0, this, [this] {
+                QStringList names;
+                names.reserve(static_cast<qsizetype>(documents_.size()));
+                for (const auto& session : documents_)
+                    names.push_back(QFileInfo(session->canonical_path).fileName());
+                const auto joined = names.join(QLatin1Char('|')).toUtf8();
+                std::fprintf(stdout, "MOONMARK_SMOKE startup_arguments=ok documents=%zu names=%s\n",
+                             documents_.size(), joined.constData());
+                std::fflush(stdout);
+                QCoreApplication::exit(0);
+            });
+            return;
+        }
         if (mode == QStringLiteral("autoscroll-anchor")) {
             QTimer::singleShot(250, this, [this] {
                 const auto before = api_->backend_counters(backend_);
@@ -3845,8 +3867,10 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
     moonmark::qt::windows::installNativeFrame(&window);
     QString smoke_mode;
     QStringList document_paths;
+    QStringList startup_errors;
     for (int index = 1; index < qt_argc; ++index) {
-        const auto argument = QString::fromLocal8Bit(qt_arguments[static_cast<std::size_t>(index)]);
+        const auto argument =
+            QString::fromUtf8(qt_arguments[static_cast<std::size_t>(index)]);
         if (argument == QStringLiteral("--smoke-render")) {
             smoke_mode = QStringLiteral("render");
         } else if (argument == QStringLiteral("--smoke-style")) {
@@ -3887,14 +3911,35 @@ extern "C" int moonmark_qt_run(int argc, const char* const* argv, const Moonmark
             smoke_mode = QStringLiteral("scroll-profile");
         } else if (argument == QStringLiteral("--smoke-multidoc-watcher")) {
             smoke_mode = QStringLiteral("multidoc-watcher");
-        } else if (!argument.startsWith(QLatin1Char('-')) && QFileInfo::exists(argument)) {
-            document_paths.push_back(argument);
+        } else if (argument == QStringLiteral("--smoke-startup-arguments")) {
+            smoke_mode = QStringLiteral("startup-arguments");
+        } else if (!argument.startsWith(QLatin1Char('-'))) {
+            const QFileInfo file(QDir::current().absoluteFilePath(argument));
+            if (isSupportedDocumentFile(file)) {
+                document_paths.push_back(file.canonicalFilePath());
+            } else if (!file.exists()) {
+                startup_errors.push_back(
+                    QStringLiteral("%1 — file not found").arg(QDir::toNativeSeparators(argument)));
+            } else {
+                startup_errors.push_back(
+                    QStringLiteral("%1 — unsupported document type")
+                        .arg(QDir::toNativeSeparators(argument)));
+            }
         }
     }
     for (const auto& document_path : document_paths) window.openDocument(document_path);
+    if (smoke_mode.isEmpty() && !startup_errors.isEmpty()) {
+        QTimer::singleShot(0, &window, [&window, startup_errors] {
+            QMessageBox::warning(
+                &window, QStringLiteral("Moonmark could not open some files"),
+                QStringLiteral("Moonmark opens .md, .markdown, and .txt documents.\n\n%1")
+                    .arg(startup_errors.join(QLatin1Char('\n'))));
+        });
+    }
     if (!smoke_mode.isEmpty()) {
         if (document_paths.isEmpty() && smoke_mode != QStringLiteral("snapshot") &&
-            smoke_mode != QStringLiteral("icon")) {
+            smoke_mode != QStringLiteral("icon") &&
+            smoke_mode != QStringLiteral("startup-arguments")) {
             return 3;
         }
         window.runSmoke(smoke_mode);

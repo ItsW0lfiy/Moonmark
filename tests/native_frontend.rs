@@ -45,6 +45,78 @@ fn numeric_metric(output: &str, name: &str) -> u64 {
         .unwrap_or_else(|| panic!("missing numeric metric {name} in {output}"))
 }
 
+fn run_startup_arguments_smoke(arguments: &[PathBuf]) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_moonmark"))
+        .arg("--smoke-startup-arguments")
+        .args(arguments)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("launch Moonmark startup-argument smoke test");
+    assert!(
+        output.status.success(),
+        "Moonmark startup-argument smoke failed ({:?}): {}{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[test]
+fn shell_startup_arguments_open_supported_documents_once() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("moonmark-native-tests")
+        .join("startup-arguments");
+    let nested = root.join("deeply nested");
+    std::fs::create_dir_all(&nested).expect("create startup-argument test directory");
+
+    let markdown = root.join("README.md");
+    let spaced = root.join("My Document.markdown");
+    let unicode = root.join("日本語 document.txt");
+    let deep = nested.join("notes.md");
+    let unsupported = root.join("unsupported.pdf");
+    for (path, contents) in [
+        (&markdown, "# Markdown\n"),
+        (&spaced, "# Spaced Markdown\n"),
+        (&unicode, "literal Unicode text\n"),
+        (&deep, "# Deep document\n"),
+        (&unsupported, "not a supported document\n"),
+    ] {
+        std::fs::write(path, contents).expect("write startup-argument fixture");
+    }
+
+    let empty = run_startup_arguments_smoke(&[]);
+    assert!(empty.contains("documents=0"), "{empty}");
+
+    let relative_markdown = markdown
+        .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+        .expect("fixture is below manifest directory")
+        .to_path_buf();
+    let duplicate = nested.join("..").join("README.md");
+    let missing = root.join("missing.md");
+    let output = run_startup_arguments_smoke(&[
+        relative_markdown,
+        markdown.clone(),
+        duplicate,
+        spaced.clone(),
+        unicode.clone(),
+        deep.clone(),
+        unsupported,
+        missing,
+    ]);
+    assert!(output.contains("startup_arguments=ok"), "{output}");
+    assert!(output.contains("documents=4"), "{output}");
+    for name in [
+        "README.md",
+        "My Document.markdown",
+        "日本語 document.txt",
+        "notes.md",
+    ] {
+        assert!(output.contains(name), "missing {name} in {output}");
+    }
+}
+
 #[test]
 fn outline_navigation_survives_image_reflow_with_one_click() {
     for fixture_name in [
