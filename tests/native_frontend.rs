@@ -62,12 +62,37 @@ fn run_startup_arguments_smoke(arguments: &[PathBuf]) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+struct GeneratedTestDirectory(PathBuf);
+
+impl GeneratedTestDirectory {
+    fn recreate(path: PathBuf) -> Self {
+        if path.exists() {
+            std::fs::remove_dir_all(&path).expect("remove stale generated test directory");
+        }
+        std::fs::create_dir_all(&path).expect("create generated test directory");
+        Self(path)
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for GeneratedTestDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn shell_startup_arguments_open_supported_documents_once() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("moonmark-native-tests")
-        .join("startup-arguments");
+    let generated = GeneratedTestDirectory::recreate(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("moonmark-native-tests")
+            .join("startup-arguments"),
+    );
+    let root = generated.path();
     let nested = root.join("deeply nested");
     std::fs::create_dir_all(&nested).expect("create startup-argument test directory");
 
