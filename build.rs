@@ -211,14 +211,43 @@ fn compile_windows_resources() {
         println!("cargo:warning=rc.exe not found; executable icon was not embedded");
         return;
     };
-    let output =
-        PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR")).join("moonmark.res");
+    let output_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
+    let output = output_dir.join("moonmark.res");
+    let package_version = std::env::var("CARGO_PKG_VERSION").expect("Cargo package version");
+    let numeric_version = windows_numeric_version(&package_version);
+    let version_header = format!(
+        "#define MOONMARK_VERSION_COMMAS {},{},{},{}\n#define MOONMARK_VERSION_STRING \"{}\"\n",
+        numeric_version[0],
+        numeric_version[1],
+        numeric_version[2],
+        numeric_version[3],
+        package_version
+    );
+    std::fs::write(output_dir.join("moonmark_version.h"), version_header)
+        .expect("write Windows version resource header");
     let status = Command::new(rc)
         .arg("/nologo")
+        .arg(format!("/I{}", output_dir.display()))
         .arg(format!("/fo{}", output.display()))
         .arg("assets/icons/moonmark.rc")
         .status()
         .expect("launch Windows resource compiler");
     assert!(status.success(), "Windows resource compilation failed");
     println!("cargo:rustc-link-arg-bin=moonmark={}", output.display());
+}
+
+fn windows_numeric_version(version: &str) -> [u16; 4] {
+    let (core, prerelease) = version.split_once('-').unwrap_or((version, ""));
+    let mut core_parts = core.split('.').map(|part| part.parse::<u16>().unwrap_or(0));
+    let prerelease_number = prerelease
+        .rsplit('.')
+        .next()
+        .and_then(|part| part.parse::<u16>().ok())
+        .unwrap_or(0);
+    [
+        core_parts.next().unwrap_or(0),
+        core_parts.next().unwrap_or(0),
+        core_parts.next().unwrap_or(0),
+        prerelease_number,
+    ]
 }
